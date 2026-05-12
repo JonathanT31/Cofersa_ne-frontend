@@ -63,6 +63,7 @@ const BandejaAprobacion = () => {
   const [loading, setLoading] = useState(true);
   
   const [estadosOpen, setEstadosOpen] = useState(false);
+  const [marcasOpen, setMarcasOpen] = useState(false);
 
   useEffect(() => {
     const fetchBandeja = async () => {
@@ -83,7 +84,6 @@ const BandejaAprobacion = () => {
   }, [user]);
 
   if (loading) return <Layout title="Bandeja" active="bandeja"><div className="text-center" style={{padding:'40px'}}>Cargando bandeja...</div></Layout>;
-  const [marcasOpen, setMarcasOpen] = useState(false);
 
   return (
     <Layout title="Bandeja de Aprobación" active="bandeja">

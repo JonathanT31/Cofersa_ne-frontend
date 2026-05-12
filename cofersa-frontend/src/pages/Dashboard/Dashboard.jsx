@@ -18,6 +18,20 @@ const Dashboard = () => {
   const [stats, setStats] = useState(null);
   const [loading, setLoading] = useState(true);
 
+  // Placeholders for data not yet fully implemented in API
+  const gasto_anual = 0;
+  const total_ppto = 0;
+  const consumo_anual_pct = 0;
+  const pac = "#27ae60";
+  const monthly_data = Array(12).fill([0, 0]);
+  const by_sup_sel = [];
+  const by_sup_marca_sel = [];
+  const by_marca_sel = [];
+  const top10 = [];
+  const max_val = 1;
+  const sel_label = "Período Actual";
+  const n_months = 1;
+
   useEffect(() => {
     const fetchStats = async () => {
       try {

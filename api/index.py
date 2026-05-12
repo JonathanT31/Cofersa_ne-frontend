@@ -4,6 +4,7 @@ from typing import List, Dict, Any, Optional
 from pydantic import BaseModel
 from fastapi import FastAPI, Header, HTTPException, Query, Depends
 from fastapi.middleware.cors import CORSMiddleware
+
 from api.infocompras import infocompras_service
 from api.solicitudes_service import (
     create_solicitud,
@@ -47,12 +48,13 @@ def health_check():
 
 @app.get("/api/infocompras")
 async def api_get_infocompras():
+    """Fetch product catalog from Infocompras proxy."""
     try:
         products = await infocompras_service.get_products()
         return {"success": True, "count": len(products), "products": products}
-    except Exception as e:
-        logger.error(f"Error in infocompras: {e}")
-        return {"success": False, "error": "Failed to fetch products"}
+    except Exception:
+        logger.exception("Error fetching infocompras data")
+        raise HTTPException(status_code=500, detail="Failed to fetch products from external service")
 
 @app.get("/api/solicitudes")
 async def api_get_solicitudes(
@@ -99,42 +101,47 @@ async def api_create_solicitud(
     data: SolicitudCreate,
     user_id: str = Depends(get_auth_user_id)
 ):
+    """Create a new special negotiation request."""
     try:
         result = await create_solicitud(data, user_id)
         return {"success": True, "data": result}
     except ValueError as ve:
         raise HTTPException(status_code=400, detail=str(ve))
-    except Exception as e:
-        logger.error(f"Unexpected error creating solicitud: {e}")
-        raise HTTPException(status_code=500, detail="Internal server error")
+    except Exception:
+        logger.exception("Unexpected error creating solicitud")
+        raise HTTPException(status_code=500, detail="Internal server error while creating request")
 
 @app.get("/api/reglas")
-def get_reglas():
+async def api_get_reglas():
+    """Get all approval rules."""
     supabase = get_scoped_supabase()
     res = supabase.table("reglas").select("*").order("marca").execute()
     return {"success": True, "data": res.data}
 
 @app.get("/api/marcas")
-def get_marcas():
+async def api_get_marcas():
+    """Get list of available brands."""
     supabase = get_scoped_supabase()
     res = supabase.table("reglas").select("marca").execute()
     marcas = sorted(list(set(r["marca"] for r in res.data))) if res.data else []
     return {"success": True, "marcas": marcas}
 
 @app.get("/api/presupuesto")
-def get_presupuesto():
+async def api_get_presupuesto():
+    """Get budget information."""
     supabase = get_scoped_supabase()
     res = supabase.table("presupuesto").select("*").execute()
     return {"success": True, "data": res.data}
 
 @app.get("/api/usuarios")
-def get_usuarios():
+async def api_get_usuarios():
+    """Get user profiles."""
     supabase = get_scoped_supabase()
     res = supabase.table("profiles").select("*").execute()
     return {"success": True, "data": res.data}
 
 @app.get("/api/dashboard/stats")
-def get_dashboard_stats(user_id: str = Depends(get_auth_user_id)):
+async def api_get_dashboard_stats(user_id: str = Depends(get_auth_user_id)):
     supabase = get_scoped_supabase()
     res = supabase.table("solicitudes").select("estado").execute()
 

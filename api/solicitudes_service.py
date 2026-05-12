@@ -3,6 +3,9 @@ from pydantic import BaseModel
 from api.supabase_client import get_scoped_supabase as get_supabase
 from api.utils import add_business_hours
 from datetime import datetime
+import logging
+
+logger = logging.getLogger(__name__)
 
 class SkuItem(BaseModel):
     marca: str
@@ -39,9 +42,8 @@ async def create_solicitud(data: SolicitudCreate, user_id: str):
         profile = supabase.table("profiles").select("*").eq("id", user_id).single().execute()
         if profile.data:
             aprobador_id = profile.data.get("supervisor_id")
-    except Exception as e:
-        # Log error but proceed if possible, or raise specific error
-        print(f"Error fetching profile: {e}")
+    except Exception:
+        logger.exception(f"Error fetching profile for user {user_id}")
 
     # 2. SLA Calculation
     sla_deadline = add_business_hours(datetime.now(), 8).isoformat()
