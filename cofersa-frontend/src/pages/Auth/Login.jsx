@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { formatCRC, formatPct, EstadoBadge } from "../../components/common/UIComponents";
 import { Link, useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
 

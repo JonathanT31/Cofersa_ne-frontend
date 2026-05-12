@@ -1,12 +1,9 @@
 import React, { useState, useEffect } from 'react';
+import { formatCRC, formatPct, EstadoBadge } from "../../components/common/UIComponents";
 import { Link } from 'react-router-dom';
 import Layout from '../../components/layout/Layout';
 import { useAuth } from '../../context/AuthContext';
 
-const formatCRC = (n) => {
-  if (isNaN(n)) return "₡0.00";
-  return "₡" + Number(n).toLocaleString('en', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-};
 
 const Inicio = () => {
   const { user } = useAuth();

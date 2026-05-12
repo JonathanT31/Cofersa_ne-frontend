@@ -1,12 +1,9 @@
 import React, { useState, useEffect } from 'react';
+import { formatCRC, formatPct, EstadoBadge } from "../../components/common/UIComponents";
 import { useNavigate } from 'react-router-dom';
 import Layout from '../../components/layout/Layout';
 import { infocomprasService } from '../../services/infocomprasService';
 
-const formatCRC = (n) => {
-  if (isNaN(n)) return "₡0.00";
-  return "₡" + Number(n).toLocaleString('en', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-};
 
 const normalizeText = (t) => {
   return (t || '').toLowerCase()

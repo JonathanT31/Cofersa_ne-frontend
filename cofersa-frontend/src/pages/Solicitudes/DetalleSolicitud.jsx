@@ -1,33 +1,8 @@
 import React, { useState, useEffect } from 'react';
+import { formatCRC, formatPct, EstadoBadge } from "../../components/common/UIComponents";
 import { useParams, Link, useSearchParams, useNavigate } from 'react-router-dom';
 import Layout from '../../components/layout/Layout';
 import { useAuth } from '../../context/AuthContext';
-
-const formatCRC = (n) => {
-  if (isNaN(n)) return "₡0.00";
-  return "₡" + Number(n).toLocaleString('en', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-};
-
-const formatPct = (n) => {
-  if (isNaN(n)) return "0.00%";
-  return Number(n).toFixed(2) + "%";
-};
-
-const EstadoBadge = ({ estado }) => {
-  const clsMap = {
-    'borrador': 'badge-draft', 'pendiente': 'badge-pending',
-    'en_revision': 'badge-review', 'escalada': 'badge-escalated',
-    'aprobada': 'badge-approved', 'parcialmente_aprobada': 'badge-escalated',
-    'rechazada': 'badge-rejected', 'cancelada': 'badge-cancelled',
-  };
-  const labels = {
-    'borrador': 'Borrador', 'pendiente': 'Pendiente',
-    'en_revision': 'En Revisión', 'escalada': 'Escalada',
-    'aprobada': 'Aprobada', 'parcialmente_aprobada': 'Parcial',
-    'rechazada': 'Rechazada', 'cancelada': 'Cancelada',
-  };
-  return <span className={`badge ${clsMap[estado] || 'badge-draft'}`}>{labels[estado] || estado}</span>;
-};
 
 const DetalleSolicitud = () => {
   const { id } = useParams();
@@ -48,7 +23,6 @@ const DetalleSolicitud = () => {
       const json = await res.json();
       if (json.ok) {
         setData(json);
-        // Initialize actions
         const initialActs = {};
         const initialAdjs = {};
         json.skus.forEach(s => {
@@ -150,7 +124,6 @@ const DetalleSolicitud = () => {
   ) && ['pendiente', 'en_revision', 'escalada', 'parcialmente_aprobada'].includes(solicitud.estado);
 
   const pendingSkus = skus.filter(s => s.sku_estado === 'pendiente');
-
   const msg = searchParams.get('msg');
 
   return (
@@ -237,7 +210,7 @@ const DetalleSolicitud = () => {
                 <tbody>
                   {mskus.map(s => {
                     const ecls = { 'aprobado': 'badge-approved', 'rechazado': 'badge-rejected', 'pendiente': 'badge-pending' }[s.sku_estado] || 'badge-draft';
-                    const elbl = { 'aprobado': '✓ Aprobado', 'rechazado': '✕ Rechazado', 'pendiente': '⏳ Pendiente' }[s.sku_estado] || s.sku_estado;
+                    const elbl = { 'aprobado': '✓ Aprobado', 'rechazado': '✕ Rechazada', 'pendiente': '⏳ Pendiente' }[s.sku_estado] || s.sku_estado;
                     return (
                       <tr key={s.id}>
                         <td>{s.codigo_sku}</td>
@@ -277,7 +250,7 @@ const DetalleSolicitud = () => {
             const act = skuActions[s.id] || 'aprobar';
             return (
               <div key={s.id} className="sku-row" style={{ marginBottom: '10px' }}>
-                <div style={{ display: 'flex', justifyBetween: 'space-between', flexWrap: 'wrap', gap: '6px', marginBottom: '6px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap', gap: '6px', marginBottom: '6px' }}>
                   <strong className="font-sm">{s.marca} — {s.codigo_sku} — {s.descripcion}</strong>
                   <select className="form-control" style={{ width: '160px' }} value={act} onChange={(e) => handleActChange(s.id, e.target.value)}>
                     <option value="aprobar">✓ Aprobar</option>

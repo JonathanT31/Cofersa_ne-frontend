@@ -1,4 +1,5 @@
 import React from 'react';
+import { formatCRC, formatPct, EstadoBadge } from "../../components/common/UIComponents";
 import Layout from '../../components/layout/Layout';
 import { useAuth } from '../../context/AuthContext';
 

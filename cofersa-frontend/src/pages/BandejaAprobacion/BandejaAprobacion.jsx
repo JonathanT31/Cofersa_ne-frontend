@@ -1,34 +1,14 @@
 import React, { useState, useEffect } from 'react';
+import { formatCRC, EstadoBadge } from "../../components/common/UIComponents";
 import { Link, useSearchParams } from 'react-router-dom';
 import Layout from '../../components/layout/Layout';
-
-const formatCRC = (n) => {
-  if (isNaN(n)) return "₡0.00";
-  return "₡" + Number(n).toLocaleString('en', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-};
-
-const EstadoBadge = ({ estado }) => {
-  const clsMap = {
-    'borrador': 'badge-draft', 'pendiente': 'badge-pending',
-    'en_revision': 'badge-review', 'escalada': 'badge-escalated',
-    'aprobada': 'badge-approved', 'parcialmente_aprobada': 'badge-escalated',
-    'rechazada': 'badge-rejected', 'cancelada': 'badge-cancelled',
-  };
-  const labels = {
-    'borrador': 'Borrador', 'pendiente': 'Pendiente',
-    'en_revision': 'En Revisión', 'escalada': 'Escalada',
-    'aprobada': 'Aprobada', 'parcialmente_aprobada': 'Parcial',
-    'rechazada': 'Rechazada', 'cancelada': 'Cancelada',
-  };
-  return <span className={`badge ${clsMap[estado] || 'badge-draft'}`}>{labels[estado] || estado}</span>;
-};
 
 const BandejaAprobacion = () => {
   const [searchParams, setSearchParams] = useSearchParams();
   const [solicitudes, setSolicitudes] = useState([]);
   const [allMarcas, setAllMarcas] = useState([]);
   const [loading, setLoading] = useState(true);
-  
+
   const [estadosOpen, setEstadosOpen] = useState(false);
   const [marcasOpen, setMarcasOpen] = useState(false);
 
