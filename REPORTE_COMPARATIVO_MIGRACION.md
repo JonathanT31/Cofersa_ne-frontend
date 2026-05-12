@@ -59,3 +59,21 @@ Para que el frontend sea funcional con Supabase, se requieren los siguientes end
 2.  **Configurar Supabase Client:** Reemplazar `httpClient.js` con el cliente de Supabase y mapear las tablas existentes de SQLite a Supabase.
 3.  **Migrar Lógica de Aprobación:** Implementar las reglas de negocio (SLA y límites) mediante Database Functions o Edge Functions en Supabase para asegurar la integridad de los datos.
 4.  **Habilitar Notificaciones:** Configurar Supabase Edge Functions para disparar correos electrónicos (vía SendGrid/Resend) ante cambios de estado en las solicitudes.
+
+## 6. Recomendación de Arquitectura de Backend
+
+Dado que ya tienes una base sólida de lógica de negocio en Python (especialmente para el procesamiento de Excel con `xlsx_reader.py` y el cálculo de SLAs), la recomendación para el backend es utilizar **FastAPI**.
+
+### ¿Por qué FastAPI + Vercel?
+
+1.  **Reutilización de Código:** Puedes portar casi directamente las funciones de `xlsx_reader.py`, `email_service.py` y los cálculos de horas laborales de `main.py` sin tener que reescribirlos en otro lenguaje.
+2.  **Compatibilidad con Vercel:** Vercel soporta nativamente funciones serverless en Python. Puedes estructurar el proyecto como un monorepo donde `/api` sea tu backend FastAPI.
+3.  **Rendimiento:** FastAPI es uno de los frameworks más rápidos de Python, ideal para una API que servirá de puente entre React y Supabase.
+4.  **Integración con Supabase:** Puedes usar el SDK de Supabase para Python (`supabase-py`) dentro de FastAPI para manejar la persistencia y la autenticación de forma segura.
+
+### Alternativa: Next.js API Routes
+Si prefieres unificar todo en el ecosistema de JavaScript/TypeScript, **Next.js** es la opción lógica al estar ya usando React. Sin embargo, esto implicaría:
+- Reescribir la lógica de procesamiento de Excel (usando librerías como `xlsx`).
+- Portar la lógica de negocio y cálculos de fechas.
+
+**Conclusión:** Para minimizar el tiempo de migración y aprovechar lo ya construido, **FastAPI** es la opción más eficiente.
