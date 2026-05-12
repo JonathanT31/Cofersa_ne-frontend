@@ -23,17 +23,25 @@ class SolicitudCreate(BaseModel):
     skus: List[SkuItem]
 
 async def create_solicitud(data: SolicitudCreate, user_id: str):
+    """
+    Creates a new solicitud and its associated SKUs in Supabase.
+    Includes simplified routing and SLA calculation logic.
+    """
     supabase = get_supabase()
 
     # 1. Determine routing and level (Simplified for now)
     # In a real scenario, fetch limits from 'reglas' table
     aprobador_nivel = 'supervisor'
-    aprobador_id = None # Logic to find supervisor_id from profiles
+    aprobador_id = None
 
     # Fetch user profile to get supervisor
-    profile = supabase.table("profiles").select("*").eq("id", user_id).single().execute()
-    if profile.data:
-        aprobador_id = profile.data.get("supervisor_id")
+    try:
+        profile = supabase.table("profiles").select("*").eq("id", user_id).single().execute()
+        if profile.data:
+            aprobador_id = profile.data.get("supervisor_id")
+    except Exception as e:
+        # Log error but proceed if possible, or raise specific error
+        print(f"Error fetching profile: {e}")
 
     # 2. SLA Calculation
     sla_deadline = add_business_hours(datetime.now(), 8).isoformat()
@@ -41,7 +49,7 @@ async def create_solicitud(data: SolicitudCreate, user_id: str):
     monto_total = sum(sku.monto_descuento for sku in data.skus)
 
     # 3. Insert Solicitud
-    sol_res = supabase.table("solicitudes").insert({
+    sol_data = {
         "cliente_codigo": data.cliente_codigo,
         "cliente_nombre": data.cliente_nombre,
         "numero_pedido": data.numero_pedido,
@@ -52,21 +60,24 @@ async def create_solicitud(data: SolicitudCreate, user_id: str):
         "monto_total_descuento": monto_total,
         "sla_deadline": sla_deadline,
         "estado": "pendiente"
-    }).execute()
+    }
+
+    sol_res = supabase.table("solicitudes").insert(sol_data).execute()
 
     if not sol_res.data:
-        raise Exception("Failed to create solicitud")
+        raise ValueError("Failed to create solicitud in database")
 
     sol_id = sol_res.data[0]["id"]
 
     # 4. Insert SKUs
     sku_data = []
     for sku in data.skus:
-        sku_dict = sku.dict()
+        sku_dict = sku.model_dump() # Use model_dump instead of dict() for Pydantic v2
         sku_dict["solicitud_id"] = sol_id
         sku_data.append(sku_dict)
 
-    supabase.table("solicitud_skus").insert(sku_data).execute()
+    if sku_data:
+        supabase.table("solicitud_skus").insert(sku_data).execute()
 
     return sol_res.data[0]
 

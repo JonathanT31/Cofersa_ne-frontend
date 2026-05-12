@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import Layout from '../../components/layout/Layout';
 import { httpClient } from '../../api/httpClient';
@@ -64,7 +64,7 @@ const BandejaAprobacion = () => {
   
   const [estadosOpen, setEstadosOpen] = useState(false);
 
-  React.useEffect(() => {
+  useEffect(() => {
     const fetchBandeja = async () => {
       try {
         const result = await httpClient(`${ENDPOINTS.solicitudes.base}?aprobador_id=${user?.id || ''}`, {

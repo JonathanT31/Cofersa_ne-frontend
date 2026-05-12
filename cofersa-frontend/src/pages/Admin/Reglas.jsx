@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import Layout from '../../components/layout/Layout';
 import { ENDPOINTS } from '../../api/endpoints';
 import { httpClient } from '../../api/httpClient';
@@ -7,7 +7,7 @@ const Reglas = () => {
   const [reglas, setReglas] = useState([]);
   const [loading, setLoading] = useState(true);
 
-  React.useEffect(() => {
+  useEffect(() => {
     const fetchReglas = async () => {
       try {
         const res = await httpClient(ENDPOINTS.admin.reglas);

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import Layout from '../../components/layout/Layout';
 
@@ -58,7 +58,7 @@ const DetalleSolicitud = () => {
   const [skus, setSkus] = useState([]);
   const [audit, setAudit] = useState([]);
 
-  React.useEffect(() => {
+  useEffect(() => {
     const loadDetail = async () => {
       try {
         const res = await httpClient(`${ENDPOINTS.solicitudes.base}/${id}`);

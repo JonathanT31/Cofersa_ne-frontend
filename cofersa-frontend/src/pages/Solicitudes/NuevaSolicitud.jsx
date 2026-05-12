@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import Layout from '../../components/layout/Layout';
 
@@ -31,7 +31,7 @@ const NuevaSolicitud = () => {
 
   const [formErrors, setFormErrors] = useState([]);
 
-  React.useEffect(() => {
+  useEffect(() => {
     const loadData = async () => {
       try {
         setLoadingInfoc(true);
@@ -174,15 +174,13 @@ const NuevaSolicitud = () => {
           }))
         };
 
-        const res = await fetch(ENDPOINTS.solicitudes.create, {
+        const result = await httpClient(ENDPOINTS.solicitudes.create, {
           method: 'POST',
           headers: {
-            'Content-Type': 'application/json',
             'X-User-Id': user?.id || ''
           },
           body: JSON.stringify(payload)
         });
-        const result = await res.json();
 
         if (result.success) {
           alert("Solicitud enviada con éxito.");
