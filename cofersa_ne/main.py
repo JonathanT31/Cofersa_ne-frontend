@@ -182,9 +182,12 @@ class RequestHandler(http.server.BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(data)
     
-    def respond_json(self, obj, status=200):
+    def respond_json(self, obj, status=200, extra_headers=None):
         self.send_response(status)
         self.send_header('Content-Type', 'application/json; charset=utf-8')
+        if extra_headers:
+            for k, v in extra_headers.items():
+                self.send_header(k, v)
         data = json.dumps(obj, ensure_ascii=False, default=str).encode('utf-8')
         self.send_header('Content-Length', len(data))
         self.end_headers()
@@ -327,6 +330,18 @@ class RequestHandler(http.server.BaseHTTPRequestHandler):
                 '/email/preview': self.page_email_preview,
                 '/api/marcas': self.api_marcas,
                 '/api/stats': self.api_stats,
+                '/api/me': self.api_me,
+                '/api/solicitudes/mis': self.api_solicitudes_mis,
+                '/api/solicitudes/bandeja': self.api_solicitudes_bandeja,
+                '/api/solicitud/detalle': self.api_solicitud_detalle_json,
+                '/api/dashboard/data': self.api_dashboard_data,
+                '/api/admin/reglas': self.api_admin_reglas_json,
+                '/api/admin/presupuesto': self.api_admin_presupuesto_json,
+                '/api/admin/usuarios': self.api_admin_usuarios_json,
+                '/api/admin/password-resets': self.api_admin_password_resets_json,
+                '/api/admin/auditoria': self.api_admin_auditoria_json,
+                '/api/admin/config': self.api_admin_config_json,
+                '/api/admin/solicitudes': self.api_admin_solicitudes_json,
             }
             
             handler = routes.get(path)
@@ -426,9 +441,16 @@ class RequestHandler(http.server.BaseHTTPRequestHandler):
             token = db.create_session(user['id'])
             db.log_audit(user['id'], username, 'login', ip=self.get_client_ip())
             cookie_header = self.set_cookie('session', token)
-            self.redirect('/', extra_headers={'Set-Cookie': cookie_header})
+
+            if self.headers.get('Content-Type', '').startswith('application/json'):
+                self.respond_json({'ok': True}, extra_headers={'Set-Cookie': cookie_header})
+            else:
+                self.redirect('/', extra_headers={'Set-Cookie': cookie_header})
         else:
-            self.respond_html(page_login('Usuario o contraseña incorrectos.'))
+            if self.headers.get('Content-Type', '').startswith('application/json'):
+                self.respond_json({'ok': False, 'error': 'Usuario o contraseña incorrectos'}, 401)
+            else:
+                self.respond_html(page_login('Usuario o contraseña incorrectos.'))
     
     def page_logout(self, query=None):
         token = self.get_cookie('session')
@@ -3697,6 +3719,321 @@ class RequestHandler(http.server.BaseHTTPRequestHandler):
             self.respond_json({'ok': False}, 401)
             return
         self.respond_json({'ok': True, 'message': 'Stats endpoint'})
+
+    def api_me(self, query=None):
+        user = self.get_user()
+        if not user:
+            self.respond_json({'ok': False}, 401)
+            return
+        self.respond_json({'ok': True, 'user': user})
+
+    def api_solicitudes_mis(self, query=None):
+        user = self.require_auth()
+        if not user: return
+        conn = db.get_db()
+        rows = conn.execute("""SELECT s.*, u.nombre||' '||u.apellido as vendedor_nombre
+            FROM solicitudes s LEFT JOIN users u ON s.vendedor_id=u.id
+            WHERE s.vendedor_id=? ORDER BY s.created_at DESC LIMIT 200""",
+            (user['id'],)).fetchall()
+        conn.close()
+        self.respond_json({'ok': True, 'solicitudes': [dict(r) for r in rows]})
+
+    def api_solicitudes_bandeja(self, query=None):
+        user = self.require_auth()
+        if not user: return
+        conn = db.get_db()
+        q = query or {}
+        role = user['role']
+        estados_param = q.get('estados', '')
+        marcas_param  = q.get('marcas',  '')
+        f_estados = [e.strip() for e in estados_param.split(',') if e.strip()]
+        f_marcas  = [m.strip() for m in marcas_param.split(',')  if m.strip()]
+
+        sql = """SELECT s.*, u.nombre||' '||u.apellido as vendedor_nombre,
+                a.nombre||' '||a.apellido as aprobador_nombre
+                FROM solicitudes s
+                LEFT JOIN users u ON s.vendedor_id=u.id
+                LEFT JOIN users a ON s.aprobador_actual_id=a.id
+                WHERE 1=1"""
+        params = []
+
+        if role == 'vendedor':
+            sql += " AND s.vendedor_id=?"
+            params.append(user['id'])
+        elif role == 'supervisor':
+            sql += " AND s.vendedor_id IN (SELECT id FROM users WHERE supervisor_id=? AND status='activo')"
+            params.append(user['id'])
+
+        if f_estados:
+            ph = ','.join('?'*len(f_estados))
+            sql += f" AND s.estado IN ({ph})"
+            params.extend(f_estados)
+        else:
+            sql += " AND s.estado IN ('pendiente','en_revision','escalada','parcialmente_aprobada')"
+
+        sql += " ORDER BY s.created_at DESC LIMIT 500"
+        rows = conn.execute(sql, params).fetchall()
+
+        sol_ids = [r['id'] for r in rows]
+        marcas_by_sol = {}
+        if sol_ids:
+            ph = ','.join('?'*len(sol_ids))
+            for mr in conn.execute(
+                f"SELECT solicitud_id, GROUP_CONCAT(DISTINCT marca) as m FROM solicitud_skus WHERE solicitud_id IN ({ph}) GROUP BY solicitud_id",
+                sol_ids).fetchall():
+                marcas_by_sol[mr['solicitud_id']] = mr['m'] or ''
+
+        result = []
+        for r in rows:
+            d = dict(r)
+            d['marcas'] = marcas_by_sol.get(r['id'], '')
+            if f_marcas:
+                if any(m in d['marcas'].split(',') for m in f_marcas):
+                    result.append(d)
+            else:
+                result.append(d)
+
+        conn.close()
+        self.respond_json({'ok': True, 'solicitudes': result})
+
+    def api_solicitud_detalle_json(self, query=None):
+        user = self.require_auth()
+        if not user: return
+        q = query or {}
+        sol_id = q.get('id')
+        if not sol_id:
+            self.respond_json({'ok': False, 'error': 'ID requerido'}, 400); return
+
+        conn = db.get_db()
+        sol = conn.execute("SELECT * FROM solicitudes WHERE id=?", (sol_id,)).fetchone()
+        if not sol:
+            conn.close(); self.respond_json({'ok': False, 'error': 'No encontrada'}, 404); return
+
+        sol = dict(sol)
+        # Auth check
+        role = user['role']
+        if not (role == 'admin' or sol['vendedor_id'] == user['id'] or
+                sol['aprobador_actual_id'] == user['id'] or
+                role in ('supervisor', 'gerente_ventas', 'compras')):
+            conn.close(); self.respond_json({'ok': False, 'error': 'Sin permiso'}, 403); return
+
+        skus = [dict(r) for r in conn.execute(
+            """SELECT ss.*, u.nombre||' '||u.apellido as aprobado_por_nombre
+               FROM solicitud_skus ss LEFT JOIN users u ON ss.aprobado_por = u.id
+               WHERE ss.solicitud_id=? ORDER BY ss.marca, ss.id""", (sol_id,)).fetchall()]
+
+        vendedor = conn.execute("SELECT nombre, apellido FROM users WHERE id=?", (sol['vendedor_id'],)).fetchone()
+        aprobador = conn.execute("SELECT nombre, apellido FROM users WHERE id=?", (sol['aprobador_actual_id'],)).fetchone() if sol['aprobador_actual_id'] else None
+        audit = [dict(r) for r in conn.execute("SELECT * FROM audit_log WHERE entity_type='solicitud' AND entity_id=? ORDER BY created_at DESC", (sol_id,)).fetchall()]
+
+        # Ranges and budget info
+        info_por_marca = {}
+        if role != 'vendedor':
+            now = datetime.now()
+            m_start = f"{now.year}-{now.month:02d}-01"
+            m_end = f"{now.year+1}-01-01" if now.month == 12 else f"{now.year}-{now.month+1:02d}-01"
+
+            vend_row = conn.execute("SELECT username FROM users WHERE id=?", (sol['vendedor_id'],)).fetchone()
+            vend_uname = vend_row['username'] if vend_row else ''
+
+            marcas = set(s['marca'] for s in skus)
+            for mk in marcas:
+                rg = conn.execute("SELECT * FROM reglas WHERE marca=? LIMIT 1", (mk,)).fetchone()
+                pp = conn.execute("SELECT COALESCE(SUM(ppto_mensual_crc),0) FROM presupuesto WHERE asesor=? AND marca=?", (vend_uname, mk)).fetchone()[0] or 0
+                gs = conn.execute(
+                    """SELECT COALESCE(SUM(sk.monto_aprobado),0) FROM solicitud_skus sk JOIN solicitudes s ON sk.solicitud_id=s.id
+                       WHERE s.vendedor_id=? AND s.estado='aprobada' AND s.approved_at>=? AND s.approved_at<? AND sk.marca=? AND sk.monto_aprobado IS NOT NULL""",
+                    (sol['vendedor_id'], m_start, m_end, mk)).fetchone()[0] or 0
+                info_por_marca[mk] = {
+                    'regla': dict(rg) if rg else None,
+                    'ppto': float(pp), 'gastado': float(gs),
+                    'pct_consumo': round(float(gs)/float(pp)*100,1) if pp > 0 else 0,
+                    'month_label': f"{['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'][now.month-1]} {now.year}"
+                }
+
+        conn.close()
+        self.respond_json({
+            'ok': True,
+            'solicitud': sol,
+            'skus': skus,
+            'vendedor': dict(vendedor) if vendedor else None,
+            'aprobador': dict(aprobador) if aprobador else None,
+            'audit': audit,
+            'info_por_marca': info_por_marca
+        })
+
+    def api_dashboard_data(self, query=None):
+        user = self.require_auth()
+        if not user: return
+        conn = db.get_db()
+        q = query or {}
+        now = datetime.now()
+        role = user['role']
+
+        year_str = q.get('year', now.strftime('%Y'))
+        try: year = int(year_str)
+        except: year = now.year
+
+        months_param = q.get('months', now.strftime('%Y-%m'))
+        selected_months = sorted(set(m.strip() for m in months_param.split(',') if m.strip()))
+        if not selected_months: selected_months = [now.strftime('%Y-%m')]
+
+        def month_range(ym):
+            y2, mo2 = int(ym[:4]), int(ym[5:7])
+            ms = f"{y2}-{mo2:02d}-01"
+            me = (f"{y2+1}-01-01" if mo2==12 else f"{y2}-{mo2+1:02d}-01")
+            return ms, me
+
+        def multi_where(col, months):
+            parts, params = [], []
+            for ym in months:
+                ms, me = month_range(ym)
+                parts.append(f"({col}>=? AND {col}<?)")
+                params.extend([ms, me])
+            return "(" + " OR ".join(parts) + ")", params
+
+        approved_wh, approved_p = multi_where("s.approved_at", selected_months)
+        base_extra = ""; base_p = []
+        if role == 'supervisor':
+            base_extra = " AND s.vendedor_id IN (SELECT id FROM users WHERE supervisor_id=? AND status='activo')"
+            base_p = [user['id']]
+        elif role == 'vendedor':
+            base_extra = " AND s.vendedor_id=?"
+            base_p = [user['id']]
+
+        def qry(sql, p):
+            return conn.execute(sql, p).fetchone()[0]
+
+        rejected_wh, rejected_p = multi_where("s.updated_at",  selected_months)
+        created_wh,  created_p  = multi_where("s.created_at",  selected_months)
+
+        def qry(sql, p):
+            return conn.execute(sql, p).fetchone()[0]
+
+        gasto_sel      = qry(f"SELECT COALESCE(SUM(monto_total_aprobado),0) FROM solicitudes s WHERE estado='aprobada' AND {approved_wh} {base_extra}", approved_p+base_p)
+        aprobadas_sel  = qry(f"SELECT COUNT(*) FROM solicitudes s WHERE estado='aprobada' AND {approved_wh} {base_extra}", approved_p+base_p)
+        rechazadas_sel = qry(f"SELECT COUNT(*) FROM solicitudes s WHERE estado='rechazada' AND {rejected_wh} {base_extra}", rejected_p+base_p)
+        total_sol_sel  = qry(f"SELECT COUNT(*) FROM solicitudes s WHERE {created_wh} {base_extra}", created_p+base_p)
+        sla_ok         = qry(f"SELECT COUNT(*) FROM solicitudes s WHERE estado='aprobada' AND {approved_wh} AND approved_at<=sla_deadline {base_extra}", approved_p+base_p)
+        pendientes     = qry(f"SELECT COUNT(*) FROM solicitudes s WHERE estado IN ('pendiente','en_revision','escalada') {base_extra}", base_p)
+        sla_pct        = (sla_ok/aprobadas_sel*100) if aprobadas_sel>0 else 0
+        gasto_anual    = qry(f"SELECT COALESCE(SUM(monto_total_aprobado),0) FROM solicitudes s WHERE estado='aprobada' AND s.approved_at>=? AND s.approved_at<? {base_extra}", [f"{year}-01-01", f"{year+1}-01-01"]+base_p)
+
+        if role == "vendedor":
+            total_ppto = qry("SELECT COALESCE(SUM(ppto_mensual_crc),0) FROM presupuesto WHERE asesor=?", [user["username"]])
+        elif role == "supervisor":
+            total_ppto = qry("SELECT COALESCE(SUM(ppto_mensual_crc),0) FROM presupuesto WHERE supervisor=?", [user["username"]])
+        else:
+            total_ppto = qry("SELECT COALESCE(SUM(ppto_mensual_crc),0) FROM presupuesto", [])
+
+        ppto_periodo = total_ppto * len(selected_months)
+        consumo_pct = (gasto_sel/ppto_periodo*100) if ppto_periodo>0 else 0
+
+        # Monthly evolution
+        monthly_evo = []
+        for mo in range(1, 13):
+            ms, me = month_range(f"{year}-{mo:02d}")
+            g = qry(f"SELECT COALESCE(SUM(monto_total_aprobado),0) FROM solicitudes s WHERE estado='aprobada' AND s.approved_at>=? AND s.approved_at<? {base_extra}", [ms, me]+base_p)
+            monthly_evo.append(g)
+
+        conn.close()
+        self.respond_json({
+            'ok': True,
+            'gasto_sel': gasto_sel,
+            'aprobadas_sel': aprobadas_sel,
+            'rechazadas_sel': rechazadas_sel,
+            'total_sol_sel': total_sol_sel,
+            'pendientes': pendientes,
+            'sla_pct': round(sla_pct, 1),
+            'sla_ok': sla_ok,
+            'gasto_anual': gasto_anual,
+            'total_ppto_anual': total_ppto * 12,
+            'ppto_periodo': ppto_periodo,
+            'consumo_pct': round(consumo_pct, 1),
+            'monthly_evo': monthly_evo,
+            'selected_months': selected_months
+        })
+
+    def api_admin_reglas_json(self, query=None):
+        if not self.require_auth(['admin', 'compras']): return
+        conn = db.get_db()
+        rows = conn.execute("SELECT * FROM reglas ORDER BY clasificacion, marca").fetchall()
+        conn.close()
+        self.respond_json({'ok': True, 'reglas': [dict(r) for r in rows]})
+
+    def api_admin_presupuesto_json(self, query=None):
+        if not self.require_auth(['admin', 'compras']): return
+        q = query or {}
+        page = int(q.get('page', 1))
+        per_page = 50
+        offset = (page - 1) * per_page
+        conn = db.get_db()
+        total = conn.execute("SELECT COUNT(*) FROM presupuesto").fetchone()[0]
+        rows = conn.execute("SELECT * FROM presupuesto ORDER BY supervisor, asesor, marca LIMIT ? OFFSET ?", (per_page, offset)).fetchall()
+        conn.close()
+        self.respond_json({'ok': True, 'presupuesto': [dict(r) for r in rows], 'total': total, 'page': page, 'per_page': per_page})
+
+    def api_admin_usuarios_json(self, query=None):
+        if not self.require_auth(['admin']): return
+        conn = db.get_db()
+        users = conn.execute("""SELECT u.*, s.nombre||' '||s.apellido as supervisor_nombre
+            FROM users u LEFT JOIN users s ON u.supervisor_id=s.id
+            ORDER BY u.role, u.nombre""").fetchall()
+        supervisors = conn.execute("SELECT id, nombre, apellido FROM users WHERE role='supervisor' AND status='activo'").fetchall()
+        conn.close()
+        self.respond_json({'ok': True, 'users': [dict(u) for u in users], 'supervisors': [dict(s) for s in supervisors]})
+
+    def api_admin_password_resets_json(self, query=None):
+        if not self.require_auth(['admin']): return
+        conn = db.get_db()
+        resets = conn.execute("""
+            SELECT r.*, u.username, u.nombre, u.apellido, u.email, u.role,
+                   ra.username as resolved_by_name
+            FROM password_reset_requests r
+            JOIN users u ON r.user_id=u.id
+            LEFT JOIN users ra ON r.resolved_by=ra.id
+            ORDER BY r.requested_at DESC LIMIT 200
+        """).fetchall()
+        conn.close()
+        self.respond_json({'ok': True, 'resets': [dict(r) for r in resets]})
+
+    def api_admin_auditoria_json(self, query=None):
+        if not self.require_auth(['admin']): return
+        q = query or {}
+        page = int(q.get('page', 1))
+        per_page = 100
+        conn = db.get_db()
+        total = conn.execute("SELECT COUNT(*) FROM audit_log").fetchone()[0]
+        rows = conn.execute("SELECT * FROM audit_log ORDER BY created_at DESC LIMIT ? OFFSET ?", (per_page, (page-1)*per_page)).fetchall()
+        conn.close()
+        self.respond_json({'ok': True, 'logs': [dict(r) for r in rows], 'total': total, 'page': page, 'per_page': per_page})
+
+    def api_admin_config_json(self, query=None):
+        if not self.require_auth(['admin']): return
+        configs = ['smtp_host', 'smtp_port', 'smtp_user', 'smtp_password', 'smtp_from',
+                    'email_ne_team', 'app_name', 'base_url']
+        data = {}
+        for k in configs:
+            data[k] = db.get_config(k, '')
+        self.respond_json({'ok': True, 'config': data})
+
+    def api_admin_solicitudes_json(self, query=None):
+        if not self.require_auth(['admin', 'compras', 'gerente_ventas']): return
+        q = query or {}
+        conn = db.get_db()
+        sql = """SELECT s.*, u.nombre||' '||u.apellido as vendedor_nombre
+                FROM solicitudes s LEFT JOIN users u ON s.vendedor_id=u.id WHERE 1=1"""
+        params = []
+        if q.get('estado'):
+            sql += " AND s.estado=?"; params.append(q['estado'])
+        if q.get('desde'):
+            sql += " AND s.created_at>=?"; params.append(q['desde'])
+        if q.get('hasta'):
+            sql += " AND s.created_at<=?"; params.append(q['hasta'] + ' 23:59:59')
+        sql += " ORDER BY s.created_at DESC LIMIT 500"
+        rows = conn.execute(sql, params).fetchall()
+        conn.close()
+        self.respond_json({'ok': True, 'solicitudes': [dict(r) for r in rows]})
 
     # ========== CAMBIAR CONTRASEÑA (non-admin users) ==========
     def page_cambiar_password(self, query=None):

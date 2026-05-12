@@ -6,6 +6,7 @@ import NuevaSolicitud from './pages/Solicitudes/NuevaSolicitud'
 import MisSolicitudes from './pages/Solicitudes/MisSolicitudes'
 import BandejaAprobacion from './pages/BandejaAprobacion/BandejaAprobacion'
 import DetalleSolicitud from './pages/Solicitudes/DetalleSolicitud'
+import EmailPreview from './pages/Solicitudes/EmailPreview'
 import Exportar from './pages/Exportar/Exportar'
 import Reglas from './pages/Admin/Reglas'
 import Presupuesto from './pages/Admin/Presupuesto'
@@ -34,6 +35,7 @@ function App() {
           <Route path="/mis-solicitudes" element={<ProtectedRoute><MisSolicitudes /></ProtectedRoute>} />
           <Route path="/bandeja" element={<ProtectedRoute allowedRoles={['admin', 'supervisor', 'gerente_ventas', 'compras']}><BandejaAprobacion /></ProtectedRoute>} />
           <Route path="/solicitud/:id" element={<ProtectedRoute><DetalleSolicitud /></ProtectedRoute>} />
+          <Route path="/email/preview/:id" element={<ProtectedRoute><EmailPreview /></ProtectedRoute>} />
           <Route path="/exportar" element={<ProtectedRoute><Exportar /></ProtectedRoute>} />
           
           <Route path="/admin/reglas" element={<ProtectedRoute allowedRoles={['admin', 'compras']}><Reglas /></ProtectedRoute>} />

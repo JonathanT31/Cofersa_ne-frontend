@@ -1,30 +1,49 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import Layout from '../../components/layout/Layout';
+import { useAuth } from '../../context/AuthContext';
 
-const APP_VERSION = "v5.2.1";
+const formatCRC = (n) => {
+  if (isNaN(n)) return "₡0.00";
+  return "₡" + Number(n).toLocaleString('en', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+};
 
 const Inicio = () => {
+  const { user } = useAuth();
+  const [stats, setStats] = useState(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    fetch('/api/dashboard/data')
+      .then(res => res.json())
+      .then(json => {
+        if (json.ok) setStats(json);
+      })
+      .finally(() => setLoading(false));
+  }, []);
+
+  if (loading || !stats) return <Layout title="Inicio"><div>Cargando...</div></Layout>;
+
   return (
     <Layout title="Inicio" active="inicio">
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '8px', marginBottom: '8px' }}>
-        <h1 style={{ margin: 0 }}>Bienvenido, Admin Prueba</h1>
-        <span style={{ background: '#1a5276', color: 'white', padding: '4px 12px', borderRadius: '12px', fontSize: '12px', fontWeight: 600 }}>{APP_VERSION}</span>
+        <h1 style={{ margin: 0 }}>Bienvenido, {user?.nombre} {user?.apellido}</h1>
+        <span style={{ background: '#1a5276', color: 'white', padding: '4px 12px', borderRadius: '12px', fontSize: '12px', fontWeight: 600 }}>v5.2.1</span>
       </div>
       
       <div className="grid-4">
-        <div className="kpi-card"><div className="kpi-value">12</div><div className="kpi-label">Pendientes Totales</div></div>
-        <div className="kpi-card"><div className="kpi-value">45</div><div className="kpi-label">Solicitudes (mes)</div></div>
-        <div className="kpi-card"><div className="kpi-value">₡1,250,000.00</div><div className="kpi-label">Gasto Desc. (mes)</div></div>
-        <div className="kpi-card"><div className="kpi-value">8</div><div className="kpi-label">Usuarios Activos</div></div>
+        <div className="kpi-card"><div className="kpi-value">{stats.pendientes}</div><div className="kpi-label">Pendientes Totales</div></div>
+        <div className="kpi-card"><div className="kpi-value">{stats.total_sol_sel}</div><div className="kpi-label">Solicitudes (período)</div></div>
+        <div className="kpi-card"><div className="kpi-value">{formatCRC(stats.gasto_sel)}</div><div className="kpi-label">Gasto Desc.</div></div>
+        <div className="kpi-card"><div className="kpi-value">{stats.consumo_pct}%</div><div className="kpi-label">Consumo Ppto.</div></div>
       </div>
       
       <div className="grid-2" style={{ marginTop: '20px' }}>
         <div className="card">
-          <Link to="/admin/solicitudes" className="btn btn-primary">Ver Todas las Solicitudes</Link>
+          <Link to="/mis-solicitudes" className="btn btn-primary" style={{ width: '100%', justifyContent: 'center' }}>📋 Mis Solicitudes</Link>
         </div>
         <div className="card">
-          <Link to="/dashboard" className="btn btn-primary">Ver Dashboard</Link>
+          <Link to="/solicitud/nueva" className="btn btn-success" style={{ width: '100%', justifyContent: 'center' }}>+ Nueva Solicitud</Link>
         </div>
       </div>
     </Layout>

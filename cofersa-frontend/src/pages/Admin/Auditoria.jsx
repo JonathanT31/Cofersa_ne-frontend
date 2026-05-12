@@ -1,37 +1,47 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import Layout from '../../components/layout/Layout';
 
-const mockAudit = [
-  { id: 1, created_at: '2026-05-07 10:00:00', username: 'admin', action: 'config_actualizada', entity_type: '', entity_id: '', details: 'smtp_host, smtp_port', ip_address: '192.168.1.1' },
-  { id: 2, created_at: '2026-05-07 09:30:00', username: 'admin', action: 'password_reset_requested', entity_type: 'user', entity_id: '15', details: 'Solicitud de reseteo para m.gomez', ip_address: '192.168.1.1' },
-  { id: 3, created_at: '2026-05-06 14:00:00', username: 'j.perez', action: 'solicitud_creada', entity_type: 'solicitud', entity_id: '101', details: 'Creada folio NE-0101', ip_address: '10.0.0.5' },
-];
-
 const Auditoria = () => {
-  const [logs] = useState(mockAudit);
+  const [searchParams, setSearchParams] = useSearchParams();
+  const [data, setData] = useState({ logs: [], total: 0, page: 1, per_page: 100 });
+  const [loading, setLoading] = useState(true);
+
+  const fetchLogs = async () => {
+    setLoading(true);
+    try {
+      const res = await fetch(`/api/admin/auditoria?${searchParams.toString()}`);
+      const json = await res.json();
+      if (json.ok) setData(json);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchLogs();
+  }, [searchParams]);
+
+  const changePage = (p) => {
+    searchParams.set('page', p);
+    setSearchParams(searchParams);
+  };
+
+  const totalPages = Math.ceil((data.total || 0) / (data.per_page || 100));
 
   return (
     <Layout title="Auditoría" active="auditoria">
       <h1>Auditoría del Sistema</h1>
-      
       <div className="card">
-        <p style={{ fontSize: '12px', color: '#888' }}>Total: {logs.length} registros | Página 1 de 1</p>
-        
+        <p style={{ fontSize: '12px', color: '#888' }}>Total: {data.total} registros | Página {data.page} de {totalPages}</p>
         <div className="table-responsive">
           <table>
             <thead>
-              <tr>
-                <th>Fecha</th>
-                <th>Usuario</th>
-                <th>Acción</th>
-                <th>Entidad</th>
-                <th>Detalle</th>
-                <th>IP</th>
-              </tr>
+              <tr><th>Fecha</th><th>Usuario</th><th>Acción</th><th>Entidad</th><th>Detalle</th><th>IP</th></tr>
             </thead>
             <tbody>
-              {logs.map(log => (
-                <tr key={log.id}>
+              {loading ? <tr><td colSpan="6" className="text-center">Cargando...</td></tr> : data.logs.map((log, i) => (
+                <tr key={i}>
                   <td style={{ fontSize: '11px' }}>{log.created_at}</td>
                   <td>{log.username}</td>
                   <td>{log.action}</td>
@@ -40,20 +50,17 @@ const Auditoria = () => {
                   <td style={{ fontSize: '10px' }}>{log.ip_address}</td>
                 </tr>
               ))}
-              {logs.length === 0 && (
-                <tr><td colSpan="6" className="text-center">No hay registros de auditoría</td></tr>
-              )}
             </tbody>
           </table>
         </div>
-        
         <div style={{ marginTop: '10px' }}>
-          <button className="btn btn-primary btn-sm">1</button>
+          {Array.from({ length: Math.min(10, totalPages) }, (_, i) => i + 1).map(p => (
+            <button key={p} className={`btn btn-sm ${p === data.page ? 'btn-primary' : 'btn-outline'}`} onClick={() => changePage(p)} style={{ marginRight: '4px' }}>{p}</button>
+          ))}
         </div>
       </div>
-      
       <div style={{ marginTop: '10px' }}>
-        <button className="btn btn-outline btn-sm">Exportar CSV</button>
+        <a href="/api/export/auditoria" className="btn btn-outline btn-sm">Exportar CSV</a>
       </div>
     </Layout>
   );

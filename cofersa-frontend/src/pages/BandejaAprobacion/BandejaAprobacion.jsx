@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { Link } from 'react-router-dom';
+import React, { useState, useEffect } from 'react';
+import { Link, useSearchParams } from 'react-router-dom';
 import Layout from '../../components/layout/Layout';
 
 const formatCRC = (n) => {
@@ -7,100 +7,75 @@ const formatCRC = (n) => {
   return "₡" + Number(n).toLocaleString('en', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 };
 
-// Datos simulados basados en la estructura de la BD
-const mockBandeja = [
-  {
-    id: 201,
-    folio: 'NE-0201',
-    vendedor_nombre: 'Juan Perez',
-    cliente_nombre: 'Ferreteria X',
-    numero_pedido: 'PED-600',
-    marcas: 'Marca A, Marca B',
-    monto_total_descuento: 250000,
-    estado: 'pendiente',
-    aprobador_nivel: 'supervisor',
-    created_at: '2026-05-06 08:30:00',
-    sla_breached: true
-  },
-  {
-    id: 202,
-    folio: 'NE-0202',
-    vendedor_nombre: 'Maria Lopez',
-    cliente_nombre: 'Construcciones Y',
-    numero_pedido: '',
-    marcas: 'Marca C',
-    monto_total_descuento: 850000,
-    estado: 'en_revision',
-    aprobador_nivel: 'gerente_ventas',
-    created_at: '2026-05-07 09:15:00',
-    sla_breached: false
-  },
-  {
-    id: 203,
-    folio: '',
-    vendedor_nombre: 'Carlos Ruiz',
-    cliente_nombre: 'Distribuidora Z',
-    numero_pedido: 'PED-602',
-    marcas: 'Marca A',
-    monto_total_descuento: 45000,
-    estado: 'aprobada',
-    aprobador_nivel: 'compras',
-    created_at: '2026-05-05 14:00:00',
-    sla_breached: false
-  }
-];
-
-const all_estados = [
-  { val: 'pendiente', lbl: 'Pendiente' },
-  { val: 'en_revision', lbl: 'En Revisión' },
-  { val: 'escalada', lbl: 'Escalada' },
-  { val: 'parcialmente_aprobada', lbl: 'Parcial' },
-  { val: 'aprobada', lbl: 'Aprobada' },
-  { val: 'rechazada', lbl: 'Rechazada' },
-  { val: 'cancelada', lbl: 'Cancelada' },
-];
-
-const all_marcas = ['Marca A', 'Marca B', 'Marca C'];
-
 const EstadoBadge = ({ estado }) => {
-  let className = 'badge ';
-  let label = estado;
-  
-  switch (estado) {
-    case 'pendiente':
-      className += 'badge-pending';
-      label = 'Pendiente';
-      break;
-    case 'en_revision':
-    case 'escalada':
-      className += 'badge-warning';
-      label = estado === 'en_revision' ? 'En Revisión' : 'Escalada';
-      break;
-    case 'aprobada':
-      className += 'badge-approved';
-      label = 'Aprobada';
-      break;
-    case 'parcialmente_aprobada':
-      className += 'badge-warning';
-      label = 'Parcialmente Aprob.';
-      break;
-    case 'rechazada':
-    case 'cancelada':
-      className += 'badge-rejected';
-      label = estado.charAt(0).toUpperCase() + estado.slice(1);
-      break;
-    default:
-      className += 'badge-pending';
-  }
-
-  return <span className={className}>{label}</span>;
+  const clsMap = {
+    'borrador': 'badge-draft', 'pendiente': 'badge-pending',
+    'en_revision': 'badge-review', 'escalada': 'badge-escalated',
+    'aprobada': 'badge-approved', 'parcialmente_aprobada': 'badge-escalated',
+    'rechazada': 'badge-rejected', 'cancelada': 'badge-cancelled',
+  };
+  const labels = {
+    'borrador': 'Borrador', 'pendiente': 'Pendiente',
+    'en_revision': 'En Revisión', 'escalada': 'Escalada',
+    'aprobada': 'Aprobada', 'parcialmente_aprobada': 'Parcial',
+    'rechazada': 'Rechazada', 'cancelada': 'Cancelada',
+  };
+  return <span className={`badge ${clsMap[estado] || 'badge-draft'}`}>{labels[estado] || estado}</span>;
 };
 
 const BandejaAprobacion = () => {
-  const [solicitudes] = useState(mockBandeja);
+  const [searchParams, setSearchParams] = useSearchParams();
+  const [solicitudes, setSolicitudes] = useState([]);
+  const [allMarcas, setAllMarcas] = useState([]);
+  const [loading, setLoading] = useState(true);
   
   const [estadosOpen, setEstadosOpen] = useState(false);
   const [marcasOpen, setMarcasOpen] = useState(false);
+
+  const f_estados = searchParams.get('estados')?.split(',').filter(Boolean) || [];
+  const f_marcas = searchParams.get('marcas')?.split(',').filter(Boolean) || [];
+
+  useEffect(() => {
+    setLoading(true);
+    fetch(`/api/solicitudes/bandeja?${searchParams.toString()}`)
+      .then(res => res.json())
+      .then(data => {
+        if (data.ok) setSolicitudes(data.solicitudes);
+      })
+      .finally(() => setLoading(false));
+
+    fetch('/api/marcas')
+      .then(res => res.json())
+      .then(data => {
+        if (data.ok) setAllMarcas(data.marcas);
+      });
+  }, [searchParams]);
+
+  const toggleVal = (key, val) => {
+    const current = searchParams.get(key)?.split(',').filter(Boolean) || [];
+    let next;
+    if (current.includes(val)) next = current.filter(x => x !== val);
+    else next = [...current, val];
+
+    if (next.length) searchParams.set(key, next.join(','));
+    else searchParams.delete(key);
+    setSearchParams(searchParams);
+  };
+
+  const clearKey = (key) => {
+    searchParams.delete(key);
+    setSearchParams(searchParams);
+  };
+
+  const all_estados = [
+    { val: 'pendiente', lbl: 'Pendiente' },
+    { val: 'en_revision', lbl: 'En Revisión' },
+    { val: 'escalada', lbl: 'Escalada' },
+    { val: 'parcialmente_aprobada', lbl: 'Parcial' },
+    { val: 'aprobada', lbl: 'Aprobada' },
+    { val: 'rechazada', lbl: 'Rechazada' },
+    { val: 'cancelada', lbl: 'Cancelada' },
+  ];
 
   return (
     <Layout title="Bandeja de Aprobación" active="bandeja">
@@ -112,25 +87,22 @@ const BandejaAprobacion = () => {
           <label style={{ fontSize: '11px', color: '#888' }}>Estado</label>
           <button type="button" onClick={() => setEstadosOpen(!estadosOpen)}
             style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '9px 14px', border: '1px solid #ddd', borderRadius: '6px', background: 'white', cursor: 'pointer', fontSize: '13px', minWidth: '160px', justifyContent: 'space-between', minHeight: '40px' }}>
-            <span>Pendientes</span>
+            <span>{f_estados.length ? `${f_estados.length} estados` : 'Pendientes'}</span>
             <span style={{ color: '#888', fontSize: '10px' }}>▼</span>
           </button>
           
           {estadosOpen && (
             <div style={{ position: 'absolute', top: '100%', left: 0, zIndex: 300, background: 'white', border: '1px solid #ddd', borderRadius: '8px', boxShadow: '0 4px 20px rgba(0,0,0,.15)', minWidth: '200px', maxHeight: '300px', overflowY: 'auto', padding: '4px 0' }}>
               <label style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 12px', cursor: 'pointer', fontSize: '13px', borderBottom: '1px solid #eee', fontWeight: 600 }}>
-                <input type="checkbox" checked readOnly style={{ cursor: 'pointer', width: '14px', height: '14px' }} />
-                <span>Todos</span>
+                <input type="checkbox" checked={f_estados.length === 0} onChange={() => clearKey('estados')} style={{ cursor: 'pointer', width: '14px', height: '14px' }} />
+                <span>Todos (pendientes)</span>
               </label>
               {all_estados.map(e => (
                 <label key={e.val} style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '5px 12px', cursor: 'pointer', fontSize: '13px', whiteSpace: 'nowrap' }}>
-                  <input type="checkbox" readOnly style={{ cursor: 'pointer', width: '14px', height: '14px' }} />
+                  <input type="checkbox" checked={f_estados.includes(e.val)} onChange={() => toggleVal('estados', e.val)} style={{ cursor: 'pointer', width: '14px', height: '14px' }} />
                   <span>{e.lbl}</span>
                 </label>
               ))}
-              <div style={{ padding: '8px 10px', borderTop: '1px solid #eee' }}>
-                <button style={{ width: '100%', padding: '7px', background: '#1a5276', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer', fontSize: '13px', fontWeight: 600 }}>Aplicar</button>
-              </div>
             </div>
           )}
         </div>
@@ -139,29 +111,25 @@ const BandejaAprobacion = () => {
           <label style={{ fontSize: '11px', color: '#888' }}>Marca</label>
           <button type="button" onClick={() => setMarcasOpen(!marcasOpen)}
             style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '9px 14px', border: '1px solid #ddd', borderRadius: '6px', background: 'white', cursor: 'pointer', fontSize: '13px', minWidth: '160px', justifyContent: 'space-between', minHeight: '40px' }}>
-            <span>Todas</span>
+            <span>{f_marcas.length ? `${f_marcas.length} marcas` : 'Todas'}</span>
             <span style={{ color: '#888', fontSize: '10px' }}>▼</span>
           </button>
           
           {marcasOpen && (
             <div style={{ position: 'absolute', top: '100%', left: 0, zIndex: 300, background: 'white', border: '1px solid #ddd', borderRadius: '8px', boxShadow: '0 4px 20px rgba(0,0,0,.15)', minWidth: '200px', maxHeight: '300px', overflowY: 'auto', padding: '4px 0' }}>
               <label style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 12px', cursor: 'pointer', fontSize: '13px', borderBottom: '1px solid #eee', fontWeight: 600 }}>
-                <input type="checkbox" checked readOnly style={{ cursor: 'pointer', width: '14px', height: '14px' }} />
+                <input type="checkbox" checked={f_marcas.length === 0} onChange={() => clearKey('marcas')} style={{ cursor: 'pointer', width: '14px', height: '14px' }} />
                 <span>Todas</span>
               </label>
-              {all_marcas.map(m => (
+              {allMarcas.map(m => (
                 <label key={m} style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '5px 12px', cursor: 'pointer', fontSize: '13px', whiteSpace: 'nowrap' }}>
-                  <input type="checkbox" readOnly style={{ cursor: 'pointer', width: '14px', height: '14px' }} />
+                  <input type="checkbox" checked={f_marcas.includes(m)} onChange={() => toggleVal('marcas', m)} style={{ cursor: 'pointer', width: '14px', height: '14px' }} />
                   <span>{m}</span>
                 </label>
               ))}
-              <div style={{ padding: '8px 10px', borderTop: '1px solid #eee' }}>
-                <button style={{ width: '100%', padding: '7px', background: '#1a5276', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer', fontSize: '13px', fontWeight: 600 }}>Aplicar</button>
-              </div>
             </div>
           )}
         </div>
-
       </div>
 
       <div className="card">
@@ -169,24 +137,18 @@ const BandejaAprobacion = () => {
           <table>
             <thead>
               <tr>
-                <th>Folio/ID</th>
-                <th>Vendedor</th>
-                <th>Cliente</th>
-                <th>Pedido</th>
-                <th>Marcas</th>
-                <th className="text-right">Monto Desc.</th>
-                <th>Estado</th>
-                <th>Nivel</th>
-                <th>Fecha</th>
+                <th>Folio/ID</th><th>Vendedor</th><th>Cliente</th><th>Pedido</th>
+                <th>Marcas</th><th className="text-right">Monto Desc.</th>
+                <th>Estado</th><th>Nivel</th><th>Fecha</th>
               </tr>
             </thead>
             <tbody>
-              {solicitudes.length > 0 ? (
+              {loading ? (
+                <tr><td colSpan="9" className="text-center">Cargando...</td></tr>
+              ) : solicitudes.length > 0 ? (
                 solicitudes.map((s) => (
-                  <tr key={s.id} style={s.sla_breached ? { background: '#fff3e0' } : {}}>
-                    <td>
-                      <Link to={`/solicitud/${s.id}`}>{s.folio || `#${s.id}`}</Link>
-                    </td>
+                  <tr key={s.id}>
+                    <td><Link to={`/solicitud/${s.id}`}>{s.folio || `#${s.id}`}</Link></td>
                     <td>{s.vendedor_nombre}</td>
                     <td>{s.cliente_nombre}</td>
                     <td>{s.numero_pedido}</td>
@@ -198,11 +160,7 @@ const BandejaAprobacion = () => {
                   </tr>
                 ))
               ) : (
-                <tr>
-                  <td colSpan="9" className="text-center color-muted" style={{ padding: '20px' }}>
-                    No hay solicitudes para los filtros seleccionados
-                  </td>
-                </tr>
+                <tr><td colSpan="9" className="text-center color-muted" style={{ padding: '20px' }}>No hay solicitudes para los filtros seleccionados</td></tr>
               )}
             </tbody>
           </table>

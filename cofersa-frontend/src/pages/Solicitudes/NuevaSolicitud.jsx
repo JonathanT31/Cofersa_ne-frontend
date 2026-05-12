@@ -1,21 +1,44 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import Layout from '../../components/layout/Layout';
-
-// Datos simulados
-const mockMarcas = ['Marca A', 'Marca B', 'Marca C'];
-const currentUserRole = 'admin'; // 'vendedor', 'supervisor', 'compras', 'admin'
+import { infocomprasService } from '../../services/infocomprasService';
 
 const formatCRC = (n) => {
   if (isNaN(n)) return "₡0.00";
   return "₡" + Number(n).toLocaleString('en', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 };
 
-const mockInfocompras = [
-  { codigo_articulo: '7008590', descripcion: 'LIJADORA ORBITAL', marca: 'Marca A', codigo_afv: 'AFV-100', precio_mayoreo: 12000, precio_lista: 15000 },
-  { codigo_articulo: '3045020', descripcion: 'TALADRO PERCUTOR', marca: 'Marca B', codigo_afv: 'AFV-200', precio_mayoreo: 45000, precio_lista: 55000 },
-  { codigo_articulo: '5203003', descripcion: 'SIERRA CIRCULAR', marca: 'Marca C', codigo_afv: 'AFV-300', precio_mayoreo: 65000, precio_lista: 80000 },
-];
+const normalizeText = (t) => {
+  return (t || '').toLowerCase()
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9 ]/g, ' ');
+};
+
+const scoreProduct = (p, terms, normQuery) => {
+  const desc = normalizeText(p.DESCRIPCION);
+  const art  = normalizeText(p.ARTICULO1);
+  const afv  = normalizeText(p.CODIGO_AFV);
+  const mrca = normalizeText(p.MARCA);
+  let s = 0;
+
+  if (normQuery.length > 2 && desc.includes(normQuery)) s += 100;
+  if (normQuery.length > 2 && art.includes(normQuery))  s += 80;
+
+  if (terms.length > 1) {
+    if (terms.every(t => desc.includes(t))) s += 50;
+    if (terms.every(t => art.includes(t)))  s += 40;
+    if (terms.every(t => afv.includes(t)))  s += 35;
+  }
+
+  terms.forEach(t => {
+    if (desc.includes(t)) s += 10;
+    if (art.includes(t))  s += 8;
+    if (afv.includes(t))  s += 5;
+    if (mrca.includes(t)) s += 3;
+  });
+
+  return s;
+};
 
 const NuevaSolicitud = () => {
   const navigate = useNavigate();
@@ -26,12 +49,33 @@ const NuevaSolicitud = () => {
   
   const [skus, setSkus] = useState([]);
   const [skuCounter, setSkuCounter] = useState(0);
+  const [marcas, setMarcas] = useState([]);
 
   const [searchMode, setSearchMode] = useState('single');
   const [infocSearch, setInfocSearch] = useState('');
   const [bulkCodes, setBulkCodes] = useState('');
+  const [infocData, setInfocData] = useState([]);
+  const [infocStatus, setInfocStatus] = useState('idle');
 
   const [formErrors, setFormErrors] = useState([]);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  useEffect(() => {
+    infocomprasService.init();
+    const unsubscribe = infocomprasService.subscribe((status, data) => {
+      setInfocStatus(status);
+      setInfocData(data);
+    });
+
+    fetch('/api/marcas')
+      .then(res => res.json())
+      .then(data => {
+        if (data.ok) setMarcas(data.marcas);
+      })
+      .catch(err => console.error('Error fetching marcas:', err));
+
+    return unsubscribe;
+  }, []);
 
   const addSkuRow = (initialData = {}) => {
     const newId = skuCounter + 1;
@@ -44,12 +88,12 @@ const NuevaSolicitud = () => {
         codigo_sku: initialData.codigo_sku || '',
         descripcion: initialData.descripcion || '',
         cantidad: 1,
-        precio_mayoreo: initialData.precio_mayoreo || '',
-        precio_base: initialData.precio_base || '',
+        precio_mayoreo: initialData.precio_mayoreo || 0,
+        precio_base: initialData.precio_base || initialData.precio_mayoreo || 0,
         pct: '',
         psol: '',
         mdesc: 0,
-        bdf: '',
+        bdf: initialData.bdf || '',
         lastEdited: 'pct'
       }
     ]);
@@ -60,13 +104,12 @@ const NuevaSolicitud = () => {
   };
 
   const updateSku = (id, field, value) => {
-    setSkus(skus.map(s => {
+    setSkus(prev => prev.map(s => {
       if (s.id !== id) return s;
       const updated = { ...s, [field]: value };
 
-      // Cálculos si los números cambian
       if (['cantidad', 'precio_base', 'pct', 'psol'].includes(field)) {
-        const cant = parseFloat(updated.cantidad) || 1;
+        const cant = parseFloat(updated.cantidad) || 0;
         const lpv = parseFloat(updated.precio_base) || 0;
         
         if (field === 'pct' || (field === 'precio_base' && updated.lastEdited === 'pct')) {
@@ -111,88 +154,127 @@ const NuevaSolicitud = () => {
     return msgs.join(' ');
   };
 
-  const enviarSolicitud = () => {
+  const enviarSolicitud = async () => {
     const errors = [];
     if (!clienteCodigo.trim()) errors.push('Código de cliente es requerido.');
     if (!clienteNombre.trim()) errors.push('Nombre de cliente es requerido.');
     if (!justificacion.trim()) errors.push('Justificación es requerida.');
     if (!skus.length) errors.push('Debe agregar al menos una línea de SKU.');
 
-    skus.forEach((s) => {
+    const cleanSkus = skus.map((s, i) => {
       const lpv = parseFloat(s.precio_base) || 0;
       const pct = parseFloat(s.pct) || 0;
       const psol = parseFloat(s.psol) || 0;
       const cant = parseFloat(s.cantidad) || 0;
-      const mdesc = s.mdesc;
+      const mdesc = (lpv - psol) * cant;
 
-      if (!s.marca) errors.push(`Línea #${s.id}: Seleccione una marca.`);
-      if (!s.codigo_sku.trim()) errors.push(`Línea #${s.id}: Código SKU requerido.`);
-      if (!s.descripcion.trim()) errors.push(`Línea #${s.id}: Descripción requerida.`);
-      if (cant <= 0) errors.push(`Línea #${s.id}: Cantidad debe ser mayor a 0.`);
-      if (lpv <= 0) errors.push(`Línea #${s.id}: Precio LPV debe ser mayor a 0.`);
-      if (pct <= 0) errors.push(`Línea #${s.id}: El % de descuento debe ser mayor a 0.`);
-      if (pct > 100) errors.push(`Línea #${s.id}: Descuento no puede ser mayor a 100%.`);
-      if (psol >= lpv && pct > 0) errors.push(`Línea #${s.id}: Precio solicitado no puede ser igual o mayor al Precio LPV.`);
-      if (mdesc <= 0 && pct > 0) errors.push(`Línea #${s.id}: Monto Desc. ₡ no puede ser cero. Verifique el Precio LPV y % descuento.`);
+      if (!s.marca) errors.push(`Línea #${i + 1}: Seleccione una marca.`);
+      if (!s.codigo_sku.trim()) errors.push(`Línea #${i + 1}: Código SKU requerido.`);
+      if (!s.descripcion.trim()) errors.push(`Línea #${i + 1}: Descripción requerida.`);
+      if (cant <= 0) errors.push(`Línea #${i + 1}: Cantidad debe ser mayor a 0.`);
+      if (lpv <= 0) errors.push(`Línea #${i + 1}: Precio LPV debe ser mayor a 0.`);
+      if (pct <= 0) errors.push(`Línea #${i + 1}: El % de descuento debe ser mayor a 0.`);
+      if (pct > 100) errors.push(`Línea #${i + 1}: Descuento no puede ser mayor a 100%.`);
+      if (psol >= lpv && pct > 0) errors.push(`Línea #${i + 1}: Precio solicitado no puede ser igual o mayor al Precio LPV.`);
+      if (mdesc <= 0 && pct > 0) errors.push(`Línea #${i + 1}: Monto Desc. no puede ser cero.`);
+
+      return {
+        marca: s.marca,
+        codigo_sku: s.codigo_sku,
+        descripcion: s.descripcion,
+        bdf: s.bdf,
+        cantidad: cant,
+        precio_base: lpv,
+        porcentaje_descuento_sol: pct,
+        precio_solicitado: psol,
+        monto_descuento: mdesc
+      };
     });
 
     setFormErrors(errors);
+    if (errors.length > 0) return;
 
-    if (errors.length === 0) {
-      alert("Solicitud simulada con éxito. En producción esto llamará a la API.");
-      navigate('/');
+    setIsSubmitting(true);
+    try {
+      const response = await fetch('/api/solicitud/crear', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          cliente_codigo: clienteCodigo,
+          cliente_nombre: clienteNombre,
+          numero_pedido: numeroPedido,
+          justificacion: justificacion,
+          skus: cleanSkus
+        })
+      });
+      const result = await response.json();
+      if (result.ok) {
+        if (result.mailto) window.location.href = result.mailto;
+        setTimeout(() => navigate(`/solicitud/${result.solicitud_id}`), 500);
+      } else {
+        setFormErrors([result.error || 'Error al enviar solicitud']);
+      }
+    } catch (e) {
+      setFormErrors(['Error de conexión: ' + e.message]);
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
-  const cancelarNueva = () => {
-    if (window.confirm('¿Descartar solicitud? Se perderán los datos ingresados.')) {
-      navigate('/');
-    }
-  };
-
-  const searchResults = infocSearch.trim() === '' ? [] : mockInfocompras.filter(p => 
-    p.codigo_articulo.toLowerCase().includes(infocSearch.toLowerCase()) ||
-    p.descripcion.toLowerCase().includes(infocSearch.toLowerCase()) ||
-    p.marca.toLowerCase().includes(infocSearch.toLowerCase()) ||
-    p.codigo_afv.toLowerCase().includes(infocSearch.toLowerCase())
-  );
-
-  const handleAddFromInfocompras = (producto) => {
+  const handleAddFromInfocompras = (p) => {
     addSkuRow({
-      marca: producto.marca,
-      codigo_sku: producto.codigo_articulo,
-      descripcion: producto.descripcion,
-      precio_mayoreo: producto.precio_mayoreo,
-      precio_base: producto.precio_lista
+      marca: p.MARCA,
+      codigo_sku: p.ARTICULO1 || p.CODIGO_AFV,
+      descripcion: p.DESCRIPCION,
+      precio_mayoreo: p.PRECIO_MAYOREO,
+      bdf: p.BDF
     });
     setInfocSearch('');
   };
 
   const handleBulkAdd = () => {
-    const lines = bulkCodes.split(/[\n,]+/).map(s => s.trim()).filter(Boolean);
+    const codes = bulkCodes.split(/[\n,]+/).map(s => s.trim().toLowerCase()).filter(Boolean);
     let addedCount = 0;
-    lines.forEach(code => {
-      const match = mockInfocompras.find(p => p.codigo_articulo === code);
-      if (match) {
+    codes.forEach(code => {
+      const p = infocData.find(x =>
+        x.ARTICULO1.toLowerCase() === code ||
+        (x.CODIGO_AFV && x.CODIGO_AFV.toLowerCase() === code)
+      );
+      if (p) {
         addSkuRow({
-          marca: match.marca,
-          codigo_sku: match.codigo_articulo,
-          descripcion: match.descripcion,
-          precio_mayoreo: match.precio_mayoreo,
-          precio_base: match.precio_lista
+          marca: p.MARCA,
+          codigo_sku: p.ARTICULO1 || p.CODIGO_AFV,
+          descripcion: p.DESCRIPCION,
+          precio_mayoreo: p.PRECIO_MAYOREO,
+          bdf: p.BDF
         });
         addedCount++;
       }
     });
-    alert(`Se agregaron ${addedCount} productos de ${lines.length} códigos ingresados.`);
+    alert(`Se agregaron ${addedCount} productos.`);
     setBulkCodes('');
   };
+
+  const rawTerms = infocSearch.trim().split(/[^a-z0-9à-ÿ]+/i).filter(t => t.length >= 2);
+  const terms = rawTerms.map(normalizeText);
+  const normQuery = normalizeText(infocSearch.trim());
+
+  const searchResults = terms.length === 0 ? [] : infocData
+    .filter(p => terms.some(t =>
+      normalizeText(p.DESCRIPCION).includes(t) ||
+      normalizeText(p.ARTICULO1).includes(t) ||
+      normalizeText(p.CODIGO_AFV).includes(t) ||
+      normalizeText(p.MARCA).includes(t)
+    ))
+    .map(p => ({ p, s: scoreProduct(p, terms, normQuery) }))
+    .sort((a, b) => b.s - a.s)
+    .slice(0, 12)
+    .map(x => x.p);
 
   return (
     <Layout title="Nueva Solicitud" active="nueva">
       <h1>Nueva Solicitud de Negociación Especial</h1>
 
-      {/* 1. Sección del cliente primero */}
       <div className="card" style={{ marginBottom: '14px' }}>
         <div className="card-header">👤 Datos del Cliente</div>
         <div className="grid-3">
@@ -215,98 +297,57 @@ const NuevaSolicitud = () => {
         </div>
       </div>
 
-      {/* 2. Tarjeta de búsqueda Infocompras */}
       <div className="card" style={{ marginBottom: '14px', border: '2px solid #1a5276' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '8px', marginBottom: '12px' }}>
           <strong style={{ fontSize: '14px' }}>🔍 Búsqueda de Productos — Infocompras</strong>
-          <span style={{ fontSize: '12px', color: '#888' }}>Conectando con Infocompras... (Simulado)</span>
+          <span style={{ fontSize: '12px', color: '#888' }}>
+            {infocStatus === 'loading' ? 'Cargando Infocompras...' :
+             infocStatus === 'ready' ? `✓ ${infocData.length.toLocaleString()} productos cargados` :
+             infocStatus === 'error' ? '⚠ Error al cargar Infocompras' : 'Conectando...'}
+          </span>
         </div>
 
         <div style={{ display: 'flex', gap: 0, marginBottom: '14px', borderBottom: '2px solid #eee' }}>
-          <button 
-            className={`infoc-tab ${searchMode === 'single' ? 'active' : ''}`} 
-            onClick={() => setSearchMode('single')}
-            style={searchMode === 'single' ? { borderBottom: '2px solid #1a5276', color: '#1a5276', fontWeight: 600 } : {}}
-          >
-            Búsqueda Individual
-          </button>
-          <button 
-            className={`infoc-tab ${searchMode === 'bulk' ? 'active' : ''}`} 
-            onClick={() => setSearchMode('bulk')}
-            style={searchMode === 'bulk' ? { borderBottom: '2px solid #1a5276', color: '#1a5276', fontWeight: 600 } : {}}
-          >
-            Ingreso Masivo
-          </button>
+          <button className={`infoc-tab ${searchMode === 'single' ? 'active' : ''}`} onClick={() => setSearchMode('single')} style={searchMode === 'single' ? { borderBottom: '2px solid #1a5276', color: '#1a5276', fontWeight: 600 } : {}}>Búsqueda Individual</button>
+          <button className={`infoc-tab ${searchMode === 'bulk' ? 'active' : ''}`} onClick={() => setSearchMode('bulk')} style={searchMode === 'bulk' ? { borderBottom: '2px solid #1a5276', color: '#1a5276', fontWeight: 600 } : {}}>Ingreso Masivo</button>
         </div>
 
         {searchMode === 'single' ? (
           <div>
             <div style={{ position: 'relative' }}>
-              <input 
-                type="text" 
-                className="form-control" 
-                placeholder="Buscar por artículo, descripción, marca o código AFV..." 
-                value={infocSearch}
-                onChange={e => setInfocSearch(e.target.value)}
-              />
+              <input type="text" className="form-control" placeholder="Buscar por artículo, descripción, marca o código AFV..." value={infocSearch} onChange={e => setInfocSearch(e.target.value)} disabled={infocStatus !== 'ready'} />
               {infocSearch && searchResults.length > 0 && (
-                <div style={{ position: 'absolute', top: '100%', left: 0, right: 0, background: '#fff', border: '1px solid #ccc', zIndex: 10, maxHeight: '200px', overflowY: 'auto', boxShadow: '0 4px 6px rgba(0,0,0,0.1)' }}>
+                <div style={{ position: 'absolute', top: '100%', left: 0, right: 0, background: '#fff', border: '1px solid #ccc', zIndex: 500, maxHeight: '320px', overflowY: 'auto', boxShadow: '0 4px 16px rgba(0,0,0,0.15)' }}>
                   {searchResults.map(p => (
-                    <div 
-                      key={p.codigo_articulo} 
-                      style={{ padding: '8px 12px', cursor: 'pointer', borderBottom: '1px solid #eee', fontSize: '13px' }}
-                      onClick={() => handleAddFromInfocompras(p)}
-                      onMouseEnter={(e) => e.currentTarget.style.background = '#f5f5f5'}
-                      onMouseLeave={(e) => e.currentTarget.style.background = '#fff'}
-                    >
-                      <strong style={{ color: '#1a5276' }}>{p.codigo_articulo}</strong> - {p.descripcion} <span style={{ color: '#888' }}>({p.marca} | {p.codigo_afv})</span>
-                      <div style={{ fontSize: '11px', color: '#555' }}>LPV: {formatCRC(p.precio_lista)} | Mayoreo: {formatCRC(p.precio_mayoreo)}</div>
+                    <div key={p.ARTICULO1 || p.CODIGO_AFV} style={{ padding: '10px 14px', cursor: 'pointer', borderBottom: '1px solid #f0f0f0' }} onClick={() => handleAddFromInfocompras(p)} onMouseEnter={e => e.currentTarget.style.background = '#f0f4f8'} onMouseLeave={e => e.currentTarget.style.background = '#fff'}>
+                      <div style={{ fontWeight: 600, fontSize: '13px' }}>{p.ARTICULO1 || p.CODIGO_AFV} &nbsp;·&nbsp; <span style={{ color: '#1a5276' }}>{p.MARCA}</span> {p.PRECIO_MAYOREO > 0 && ` — ${formatCRC(p.PRECIO_MAYOREO)}`}</div>
+                      <div style={{ fontSize: '12px', color: '#666', marginTop: '2px' }}>{p.DESCRIPCION.substring(0, 90)} {p.BDF && <span style={{ color: '#1a5276', fontSize: '11px' }}>[BDF: {p.BDF}]</span>}</div>
                     </div>
                   ))}
                 </div>
               )}
-              {infocSearch && searchResults.length === 0 && (
-                <div style={{ position: 'absolute', top: '100%', left: 0, right: 0, background: '#fff', border: '1px solid #ccc', zIndex: 10, padding: '8px 12px', fontSize: '13px', color: '#888' }}>
-                  No se encontraron resultados
-                </div>
-              )}
-            </div>
-            <div style={{ fontSize: '11px', color: '#888', marginTop: '6px' }}>
-              💡 Busca y haz click para agregar un producto a la vez. Marca, código, descripción y precio se llenan automáticamente.
             </div>
           </div>
         ) : (
           <div>
             <div className="form-group">
               <label style={{ fontSize: '13px', color: '#555' }}>Ingresa códigos de artículos (uno por línea o separados por comas)</label>
-              <textarea 
-                className="form-control" 
-                placeholder={`Ejemplo:\n7008590\n3045020\n5203003\n\nO separados por comas: 7008590, 3045020, 5203003`}
-                style={{ minHeight: '130px', resize: 'vertical', fontFamily: 'monospace', fontSize: '13px' }}
-                value={bulkCodes}
-                onChange={e => setBulkCodes(e.target.value)}
-              ></textarea>
+              <textarea className="form-control" placeholder="Ejemplo: 7008590, 3045020" style={{ minHeight: '130px', fontFamily: 'monospace' }} value={bulkCodes} onChange={e => setBulkCodes(e.target.value)} disabled={infocStatus !== 'ready'}></textarea>
             </div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
-              <button className="btn btn-primary" onClick={handleBulkAdd}>➕ Agregar Todos a Solicitud</button>
-            </div>
-            <div style={{ fontSize: '11px', color: '#888', marginTop: '8px' }}>
-              💡 Pega una lista completa de códigos y se agregarán automáticamente.
-            </div>
+            <button className="btn btn-primary" onClick={handleBulkAdd} disabled={infocStatus !== 'ready'}>➕ Agregar Todos a Solicitud</button>
           </div>
         )}
       </div>
 
-      {/* Formulario principal de solicitud */}
       <div className="card" style={{ marginTop: '14px' }}>
         <div id="skuContainer">
           <div className="page-header" style={{ margin: '16px 0 8px' }}>
             <h3>Líneas de SKU</h3>
-            <button type="button" className="btn btn-outline btn-sm" onClick={addSkuRow}>+ Agregar Línea Manual</button>
+            <button type="button" className="btn btn-outline btn-sm" onClick={() => addSkuRow()}>+ Agregar Línea Manual</button>
           </div>
           
           {skus.map(s => (
-            <div className="sku-row" key={s.id} id={`sku_${s.id}`}>
+            <div className="sku-row" key={s.id}>
               <div className="sku-header">
                 <strong>Línea #{s.id}</strong>
                 <button type="button" className="btn btn-danger btn-sm" onClick={() => removeSkuRow(s.id)}>✕ Quitar</button>
@@ -314,47 +355,36 @@ const NuevaSolicitud = () => {
               <div className="sku-marca-row">
                 <div className="form-group">
                   <label>Marca *</label>
-                  <select className="form-control sku-marca" value={s.marca} onChange={e => updateSku(s.id, 'marca', e.target.value)}>
+                  <select className="form-control" value={s.marca} onChange={e => updateSku(s.id, 'marca', e.target.value)}>
                     <option value="">-- Seleccione Marca --</option>
-                    {mockMarcas.map(m => (
-                      <option key={m} value={m}>{m}</option>
-                    ))}
+                    {marcas.map(m => <option key={m} value={m}>{m}</option>)}
                   </select>
                 </div>
-                <div className="form-group">
-                  <div className="ranges-info" style={{ fontSize: '12px', color: '#555', padding: '6px 0' }}>
-                    {s.marca ? `Rangos para ${s.marca} (Simulado)` : 'Seleccione una marca para ver rangos de aprobación'}
-                  </div>
-                </div>
+                {s.bdf && <div style={{ fontSize: '11px', color: '#555', margin: '-4px 0 6px' }}>BDF: <strong style={{ color: '#1a5276' }}>{s.bdf}</strong></div>}
               </div>
               <div className="sku-fields">
                 <div className="form-group"><label>Código SKU *</label><input type="text" className="form-control" value={s.codigo_sku} onChange={e => updateSku(s.id, 'codigo_sku', e.target.value)} /></div>
                 <div className="form-group"><label>Descripción *</label><input type="text" className="form-control" value={s.descripcion} onChange={e => updateSku(s.id, 'descripcion', e.target.value)} /></div>
-                <div className="form-group"><label>Cantidad *</label><input type="number" className="form-control" min="0.01" step="any" value={s.cantidad} onChange={e => updateSku(s.id, 'cantidad', e.target.value)} /></div>
-                <div className="form-group"><label>Precio Mayoreo ₡</label><input type="number" className="form-control" readOnly style={{ background: '#f0f8ff' }} value={s.precio_mayoreo} /></div>
-                <div className="form-group"><label>Precio LPV ₡ *</label><input type="number" className="form-control" min="0" step="any" value={s.precio_base} onChange={e => updateSku(s.id, 'precio_base', e.target.value)} title="Precio Lista de Precio de Venta" /></div>
-                <div className="form-group"><label>% Desc. Sol. *</label><input type="number" className="form-control" min="0" max="100" step="0.01" value={s.pct} onChange={e => updateSku(s.id, 'pct', e.target.value)} /></div>
-                <div className="form-group"><label>Precio Sol. ₡</label><input type="number" className="form-control" min="0" step="any" value={s.psol} onChange={e => updateSku(s.id, 'psol', e.target.value)} /></div>
-                <div className="form-group"><label>Monto Desc. ₡</label><input type="text" className="form-control" readOnly style={{ background: '#f8f8f8' }} value={formatCRC(s.mdesc)} /></div>
+                <div className="form-group"><label>Cantidad *</label><input type="number" className="form-control" value={s.cantidad} onChange={e => updateSku(s.id, 'cantidad', e.target.value)} /></div>
+                <div className="form-group"><label>Precio Mayoreo</label><input type="number" className="form-control" readOnly style={{ background: '#f0f8ff' }} value={s.precio_mayoreo} /></div>
+                <div className="form-group"><label>Precio LPV *</label><input type="number" className="form-control" value={s.precio_base} onChange={e => updateSku(s.id, 'precio_base', e.target.value)} /></div>
+                <div className="form-group"><label>% Desc. Sol. *</label><input type="number" className="form-control" value={s.pct} onChange={e => updateSku(s.id, 'pct', e.target.value)} /></div>
+                <div className="form-group"><label>Precio Sol.</label><input type="number" className="form-control" value={s.psol} onChange={e => updateSku(s.id, 'psol', e.target.value)} /></div>
+                <div className="form-group"><label>Monto Desc.</label><input type="text" className="form-control" readOnly value={formatCRC(s.mdesc)} /></div>
               </div>
-              <div className="form-error" style={{ color: 'var(--danger)', fontSize: '12px', marginTop: '3px' }}>
-                {getSkuError(s)}
-              </div>
+              <div className="form-error">{getSkuError(s)}</div>
             </div>
           ))}
-
         </div>
         
         <div className="actions-bar" style={{ marginTop: '20px' }}>
-          <button type="button" className="btn btn-success" style={{ fontSize: '15px' }} onClick={enviarSolicitud}>Enviar Solicitud</button>
-          <button type="button" className="btn btn-outline" onClick={cancelarNueva}>Cancelar</button>
+          <button type="button" className="btn btn-success" onClick={enviarSolicitud} disabled={isSubmitting}>{isSubmitting ? 'Enviando...' : 'Enviar Solicitud'}</button>
+          <button type="button" className="btn btn-outline" onClick={() => navigate('/')}>Cancelar</button>
         </div>
         
         {formErrors.length > 0 && (
-          <div style={{ marginTop: '10px' }}>
-            <div className="alert alert-danger">
-              {formErrors.map((e, i) => <div key={i}>{e}</div>)}
-            </div>
+          <div className="alert alert-danger" style={{ marginTop: '10px' }}>
+            {formErrors.map((e, i) => <div key={i}>{e}</div>)}
           </div>
         )}
       </div>
