@@ -6,64 +6,31 @@ const formatCRC = (n) => {
   return "₡" + Number(n).toLocaleString('en', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 };
 
-// Datos simulados
+import { ENDPOINTS } from '../../api/endpoints';
+import { useAuth } from '../../context/AuthContext';
+import { httpClient } from '../../api/httpClient';
+
 const mlm = ["Ene","Feb","Mar","Abr","May","Jun","Jul","Ago","Sep","Oct","Nov","Dic"];
-const year = 2026;
-const selectedMonths = ["2026-05"];
-const sel_label = "May 2026";
-const n_months = 1;
-
-const gasto_sel = 1250000;
-const ppto_periodo = 2500000;
-const consumo_pct = 50.0;
-const pc = "#27ae60";
-
-const sla_pct = 95;
-const sla_ok = 42;
-const aprobadas_sel = 45;
-
-const total_sol_sel = 55;
-const rechazadas_sel = 5;
-const pendientes = 5;
-
-const gasto_anual = 8000000;
-const total_ppto = 3000000; // Monthly
-const consumo_anual_pct = 22.2;
-const pac = "#27ae60";
-
-const monthly_data = [
-  [800000, 3000000], [900000, 3000000], [1200000, 3000000], [1100000, 3000000],
-  [1250000, 3000000], [0, 3000000], [0, 3000000], [0, 3000000],
-  [0, 3000000], [0, 3000000], [0, 3000000], [0, 3000000]
-];
-
-const by_marca_sel = [
-  { marca: "Marca A", gasto: 500000, ppto: 1000000 },
-  { marca: "Marca B", gasto: 400000, ppto: 800000 },
-  { marca: "Marca C", gasto: 350000, ppto: 700000 },
-];
-
-const by_vend_sel = [
-  { vend_nombre: "Juan Perez", gasto: 400000 },
-  { vend_nombre: "Maria Lopez", gasto: 850000 }
-];
-
-const by_sup_sel = [
-  { sup_nombre: "Carlos Supervisor", gasto: 1250000, ppto: 2500000 }
-];
-
-const by_sup_marca_sel = [
-  { sup_nombre: "Carlos Supervisor", marca: "Marca A", gasto: 500000 },
-  { sup_nombre: "Carlos Supervisor", marca: "Marca B", gasto: 400000 },
-  { sup_nombre: "Carlos Supervisor", marca: "Marca C", gasto: 350000 }
-];
-
-const top10 = [
-  { id: 101, folio: 'NE-0101', vendedor_nombre: 'Juan Perez', cliente_nombre: 'Ferreteria X', monto_total_aprobado: 150000, approved_at: '2026-05-01 10:00' },
-  { id: 102, folio: 'NE-0102', vendedor_nombre: 'Maria Lopez', cliente_nombre: 'Construcciones Y', monto_total_aprobado: 250000, approved_at: '2026-05-02 11:30' },
-];
+const year = new Date().getFullYear();
 
 const Dashboard = () => {
+  const { user } = useAuth();
+  const [stats, setStats] = useState(null);
+  const [loading, setLoading] = useState(true);
+
+  React.useEffect(() => {
+    const fetchStats = async () => {
+      try {
+        const res = await httpClient(ENDPOINTS.dashboard.stats);
+        if (res.success) setStats(res.stats);
+      } catch (err) {
+        console.error("Error fetching stats:", err);
+      } finally {
+        setLoading(false);
+      }
+    };
+    fetchStats();
+  }, []);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [marcasOpen, setMarcasOpen] = useState(false);
   const [supsOpen, setSupsOpen] = useState(false);
@@ -298,27 +265,26 @@ const Dashboard = () => {
       </div>
 
       <div className="grid-4" style={{ marginBottom: '16px' }}>
-        <div className="kpi-card"><div className="kpi-value">{formatCRC(gasto_sel)}</div><div className="kpi-label">Gasto Aprobado ({sel_label})</div></div>
-        <div className="kpi-card"><div className="kpi-value">{formatCRC(ppto_periodo)}</div><div className="kpi-label">Presupuesto Período ({n_months} mes)</div></div>
+        <div className="kpi-card"><div className="kpi-value">{formatCRC(stats?.gasto_aprobado || 0)}</div><div className="kpi-label">Gasto Aprobado</div></div>
+        <div className="kpi-card"><div className="kpi-value">{formatCRC(0)}</div><div className="kpi-label">Presupuesto Período</div></div>
         <div className="kpi-card">
-          <div className="kpi-value" style={{ color: pc }}>{consumo_pct.toFixed(1)}%</div>
+          <div className="kpi-value" style={{ color: '#27ae60' }}>0.0%</div>
           <div className="kpi-label">Consumo del Presupuesto</div>
           <div className="progress-bar" style={{ marginTop: '8px' }}>
-            <div className="progress-fill" style={{ width: `${Math.min(consumo_pct, 100)}%`, background: pc }}></div>
+            <div className="progress-fill" style={{ width: `0%`, background: '#27ae60' }}></div>
           </div>
         </div>
         <div className="kpi-card">
-          <div className="kpi-value">{sla_pct}%</div>
+          <div className="kpi-value">{stats?.cumplimiento_sla || 0}%</div>
           <div className="kpi-label">Cumplimiento SLA</div>
-          <div className="kpi-sub">{sla_ok}/{aprobadas_sel} dentro de SLA</div>
         </div>
       </div>
 
       <div className="grid-4" style={{ marginBottom: '16px' }}>
-        <div className="kpi-card"><div className="kpi-value">{total_sol_sel}</div><div className="kpi-label">Solicitudes (período)</div></div>
-        <div className="kpi-card"><div className="kpi-value" style={{ color: 'var(--success)' }}>{aprobadas_sel}</div><div className="kpi-label">Aprobadas</div></div>
-        <div className="kpi-card"><div className="kpi-value" style={{ color: 'var(--danger)' }}>{rechazadas_sel}</div><div className="kpi-label">Rechazadas</div></div>
-        <div className="kpi-card"><div className="kpi-value" style={{ color: 'var(--warning)' }}>{pendientes}</div><div className="kpi-label">Pendientes (hoy)</div></div>
+        <div className="kpi-card"><div className="kpi-value">{stats?.total_solicitudes || 0}</div><div className="kpi-label">Solicitudes (Total)</div></div>
+        <div className="kpi-card"><div className="kpi-value" style={{ color: 'var(--success)' }}>{stats?.aprobadas || 0}</div><div className="kpi-label">Aprobadas</div></div>
+        <div className="kpi-card"><div className="kpi-value" style={{ color: 'var(--danger)' }}>{stats?.rechazadas || 0}</div><div className="kpi-label">Rechazadas</div></div>
+        <div className="kpi-card"><div className="kpi-value" style={{ color: 'var(--warning)' }}>{stats?.pendientes || 0}</div><div className="kpi-label">Pendientes</div></div>
       </div>
 
       <div className="grid-4" style={{ marginBottom: '16px' }}>

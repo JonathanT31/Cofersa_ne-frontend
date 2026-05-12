@@ -7,45 +7,8 @@ const formatCRC = (n) => {
   return "₡" + Number(n).toLocaleString('en', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 };
 
-// Datos simulados basados en la estructura de la BD
-const mockSolicitudes = [
-  {
-    id: 101,
-    folio: 'NE-0101',
-    cliente_nombre: 'Ferreteria X',
-    numero_pedido: 'PED-500',
-    monto_total_descuento: 150000,
-    estado: 'pendiente',
-    created_at: '2026-05-01 10:00:00'
-  },
-  {
-    id: 102,
-    folio: 'NE-0102',
-    cliente_nombre: 'Construcciones Y',
-    numero_pedido: '',
-    monto_total_descuento: 250000,
-    estado: 'aprobada',
-    created_at: '2026-05-02 11:30:00'
-  },
-  {
-    id: 103,
-    folio: '',
-    cliente_nombre: 'Distribuidora Z',
-    numero_pedido: 'PED-502',
-    monto_total_descuento: 50000,
-    estado: 'rechazada',
-    created_at: '2026-05-03 14:15:00'
-  },
-  {
-    id: 104,
-    folio: 'NE-0104',
-    cliente_nombre: 'Maderas ABC',
-    numero_pedido: 'PED-505',
-    monto_total_descuento: 80000,
-    estado: 'en_revision',
-    created_at: '2026-05-04 09:45:00'
-  }
-];
+import { ENDPOINTS } from '../../api/endpoints';
+import { useAuth } from '../../context/AuthContext';
 
 const EstadoBadge = ({ estado }) => {
   let className = 'badge ';
@@ -82,7 +45,29 @@ const EstadoBadge = ({ estado }) => {
 };
 
 const MisSolicitudes = () => {
-  const [solicitudes] = useState(mockSolicitudes);
+  const { user } = useAuth();
+  const [solicitudes, setSolicitudes] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  React.useEffect(() => {
+    const fetchSolicitudes = async () => {
+      try {
+        const result = await httpClient(`${ENDPOINTS.solicitudes.base}?vendedor_id=${user?.id || ''}`, {
+          headers: { 'X-User-Id': user?.id || '' }
+        });
+        if (result.success) {
+          setSolicitudes(result.data || []);
+        }
+      } catch (err) {
+        console.error("Error fetching solicitudes:", err);
+      } finally {
+        setLoading(false);
+      }
+    };
+    if (user) fetchSolicitudes();
+  }, [user]);
+
+  if (loading) return <Layout title="Mis Solicitudes" active="mis"><div className="text-center" style={{padding:'40px'}}>Cargando solicitudes...</div></Layout>;
 
   return (
     <Layout title="Mis Solicitudes" active="mis">

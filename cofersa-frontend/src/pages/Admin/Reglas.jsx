@@ -1,14 +1,25 @@
 import React, { useState } from 'react';
 import Layout from '../../components/layout/Layout';
-
-const initialReglas = [
-  { id: 1, marca: 'Marca A', clasificacion: 'A', limite_vendedor: 10, limite_supervisor: 15, limite_compras: 20 },
-  { id: 2, marca: 'Marca B', clasificacion: 'B', limite_vendedor: 5, limite_supervisor: 10, limite_compras: 15 },
-  { id: 3, marca: 'Marca C', clasificacion: 'C', limite_vendedor: 8, limite_supervisor: 12, limite_compras: 18 },
-];
+import { ENDPOINTS } from '../../api/endpoints';
+import { httpClient } from '../../api/httpClient';
 
 const Reglas = () => {
-  const [reglas, setReglas] = useState(initialReglas);
+  const [reglas, setReglas] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  React.useEffect(() => {
+    const fetchReglas = async () => {
+      try {
+        const res = await httpClient(ENDPOINTS.admin.reglas);
+        if (res.success) setReglas(res.data || []);
+      } catch (err) {
+        console.error(err);
+      } finally {
+        setLoading(false);
+      }
+    };
+    fetchReglas();
+  }, []);
 
   const handleAddRow = () => {
     const newId = reglas.length > 0 ? Math.max(...reglas.map(r => r.id)) + 1 : 1;
@@ -49,6 +60,8 @@ const Reglas = () => {
       if (el) el.style.borderColor = '';
     }, 1000);
   };
+
+if (loading) return <Layout title="Cargando..." active="reglas"><div className="text-center" style={{padding:'40px'}}>Cargando reglas...</div></Layout>;
 
   return (
     <Layout title="Reglas de Aprobación" active="reglas">

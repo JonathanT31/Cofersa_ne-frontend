@@ -2,22 +2,17 @@ import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import Layout from '../../components/layout/Layout';
 
-// Datos simulados
-const mockMarcas = ['Marca A', 'Marca B', 'Marca C'];
-const currentUserRole = 'admin'; // 'vendedor', 'supervisor', 'compras', 'admin'
+import { ENDPOINTS } from '../../api/endpoints';
+import { httpClient } from '../../api/httpClient';
+import { useAuth } from '../../context/AuthContext';
 
 const formatCRC = (n) => {
   if (isNaN(n)) return "₡0.00";
   return "₡" + Number(n).toLocaleString('en', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 };
 
-const mockInfocompras = [
-  { codigo_articulo: '7008590', descripcion: 'LIJADORA ORBITAL', marca: 'Marca A', codigo_afv: 'AFV-100', precio_mayoreo: 12000, precio_lista: 15000 },
-  { codigo_articulo: '3045020', descripcion: 'TALADRO PERCUTOR', marca: 'Marca B', codigo_afv: 'AFV-200', precio_mayoreo: 45000, precio_lista: 55000 },
-  { codigo_articulo: '5203003', descripcion: 'SIERRA CIRCULAR', marca: 'Marca C', codigo_afv: 'AFV-300', precio_mayoreo: 65000, precio_lista: 80000 },
-];
-
 const NuevaSolicitud = () => {
+  const { user } = useAuth();
   const navigate = useNavigate();
   const [clienteCodigo, setClienteCodigo] = useState('');
   const [clienteNombre, setClienteNombre] = useState('');
@@ -30,8 +25,29 @@ const NuevaSolicitud = () => {
   const [searchMode, setSearchMode] = useState('single');
   const [infocSearch, setInfocSearch] = useState('');
   const [bulkCodes, setBulkCodes] = useState('');
+  const [infocomprasData, setInfocomprasData] = useState([]);
+  const [marcas, setMarcas] = useState([]);
+  const [loadingInfoc, setLoadingInfoc] = useState(false);
 
   const [formErrors, setFormErrors] = useState([]);
+
+  React.useEffect(() => {
+    const loadData = async () => {
+      try {
+        setLoadingInfoc(true);
+        const resInfoc = await httpClient(ENDPOINTS.catalogo.buscar);
+        setInfocomprasData(resInfoc.products || []);
+
+        const resMarcas = await httpClient(ENDPOINTS.catalogo.marcas);
+        setMarcas(resMarcas.marcas || []);
+      } catch (err) {
+        console.error("Error loading initial data:", err);
+      } finally {
+        setLoadingInfoc(false);
+      }
+    };
+    loadData();
+  }, []);
 
   const addSkuRow = (initialData = {}) => {
     const newId = skuCounter + 1;
@@ -111,7 +127,7 @@ const NuevaSolicitud = () => {
     return msgs.join(' ');
   };
 
-  const enviarSolicitud = () => {
+  const enviarSolicitud = async () => {
     const errors = [];
     if (!clienteCodigo.trim()) errors.push('Código de cliente es requerido.');
     if (!clienteNombre.trim()) errors.push('Nombre de cliente es requerido.');
@@ -139,8 +155,44 @@ const NuevaSolicitud = () => {
     setFormErrors(errors);
 
     if (errors.length === 0) {
-      alert("Solicitud simulada con éxito. En producción esto llamará a la API.");
-      navigate('/');
+      try {
+        const payload = {
+          cliente_codigo: clienteCodigo,
+          cliente_nombre: clienteNombre,
+          numero_pedido: numeroPedido,
+          justificacion: justificacion,
+          skus: skus.map(s => ({
+            marca: s.marca,
+            codigo_sku: s.codigo_sku,
+            descripcion: s.descripcion,
+            cantidad: parseFloat(s.cantidad),
+            precio_base: parseFloat(s.precio_base),
+            porcentaje_descuento_sol: parseFloat(s.pct),
+            precio_solicitado: parseFloat(s.psol),
+            monto_descuento: s.mdesc,
+            bdf: s.bdf
+          }))
+        };
+
+        const res = await fetch(ENDPOINTS.solicitudes.create, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-User-Id': user?.id || ''
+          },
+          body: JSON.stringify(payload)
+        });
+        const result = await res.json();
+
+        if (result.success) {
+          alert("Solicitud enviada con éxito.");
+          navigate('/mis-solicitudes');
+        } else {
+          setFormErrors([result.detail || "Error al enviar la solicitud"]);
+        }
+      } catch (err) {
+        setFormErrors(["Error de conexión con el servidor"]);
+      }
     }
   };
 
@@ -150,7 +202,7 @@ const NuevaSolicitud = () => {
     }
   };
 
-  const searchResults = infocSearch.trim() === '' ? [] : mockInfocompras.filter(p => 
+  const searchResults = infocSearch.trim() === '' ? [] : infocomprasData.filter(p =>
     p.codigo_articulo.toLowerCase().includes(infocSearch.toLowerCase()) ||
     p.descripcion.toLowerCase().includes(infocSearch.toLowerCase()) ||
     p.marca.toLowerCase().includes(infocSearch.toLowerCase()) ||
@@ -172,7 +224,7 @@ const NuevaSolicitud = () => {
     const lines = bulkCodes.split(/[\n,]+/).map(s => s.trim()).filter(Boolean);
     let addedCount = 0;
     lines.forEach(code => {
-      const match = mockInfocompras.find(p => p.codigo_articulo === code);
+      const match = infocomprasData.find(p => p.codigo_articulo === code);
       if (match) {
         addSkuRow({
           marca: match.marca,
@@ -219,7 +271,9 @@ const NuevaSolicitud = () => {
       <div className="card" style={{ marginBottom: '14px', border: '2px solid #1a5276' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '8px', marginBottom: '12px' }}>
           <strong style={{ fontSize: '14px' }}>🔍 Búsqueda de Productos — Infocompras</strong>
-          <span style={{ fontSize: '12px', color: '#888' }}>Conectando con Infocompras... (Simulado)</span>
+            <label style={{ fontSize: '12px', color: '#888' }}>
+              {loadingInfoc ? 'Conectando con Infocompras...' : `${infocomprasData.length} productos cargados`}
+            </label>
         </div>
 
         <div style={{ display: 'flex', gap: 0, marginBottom: '14px', borderBottom: '2px solid #eee' }}>
@@ -316,7 +370,7 @@ const NuevaSolicitud = () => {
                   <label>Marca *</label>
                   <select className="form-control sku-marca" value={s.marca} onChange={e => updateSku(s.id, 'marca', e.target.value)}>
                     <option value="">-- Seleccione Marca --</option>
-                    {mockMarcas.map(m => (
+                    {marcas.map(m => (
                       <option key={m} value={m}>{m}</option>
                     ))}
                   </select>

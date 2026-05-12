@@ -1,54 +1,15 @@
 import React, { useState } from 'react';
 import { Link } from 'react-router-dom';
 import Layout from '../../components/layout/Layout';
+import { httpClient } from '../../api/httpClient';
 
 const formatCRC = (n) => {
   if (isNaN(n)) return "₡0.00";
   return "₡" + Number(n).toLocaleString('en', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 };
 
-// Datos simulados basados en la estructura de la BD
-const mockBandeja = [
-  {
-    id: 201,
-    folio: 'NE-0201',
-    vendedor_nombre: 'Juan Perez',
-    cliente_nombre: 'Ferreteria X',
-    numero_pedido: 'PED-600',
-    marcas: 'Marca A, Marca B',
-    monto_total_descuento: 250000,
-    estado: 'pendiente',
-    aprobador_nivel: 'supervisor',
-    created_at: '2026-05-06 08:30:00',
-    sla_breached: true
-  },
-  {
-    id: 202,
-    folio: 'NE-0202',
-    vendedor_nombre: 'Maria Lopez',
-    cliente_nombre: 'Construcciones Y',
-    numero_pedido: '',
-    marcas: 'Marca C',
-    monto_total_descuento: 850000,
-    estado: 'en_revision',
-    aprobador_nivel: 'gerente_ventas',
-    created_at: '2026-05-07 09:15:00',
-    sla_breached: false
-  },
-  {
-    id: 203,
-    folio: '',
-    vendedor_nombre: 'Carlos Ruiz',
-    cliente_nombre: 'Distribuidora Z',
-    numero_pedido: 'PED-602',
-    marcas: 'Marca A',
-    monto_total_descuento: 45000,
-    estado: 'aprobada',
-    aprobador_nivel: 'compras',
-    created_at: '2026-05-05 14:00:00',
-    sla_breached: false
-  }
-];
+import { ENDPOINTS } from '../../api/endpoints';
+import { useAuth } from '../../context/AuthContext';
 
 const all_estados = [
   { val: 'pendiente', lbl: 'Pendiente' },
@@ -97,9 +58,31 @@ const EstadoBadge = ({ estado }) => {
 };
 
 const BandejaAprobacion = () => {
-  const [solicitudes] = useState(mockBandeja);
+  const { user } = useAuth();
+  const [solicitudes, setSolicitudes] = useState([]);
+  const [loading, setLoading] = useState(true);
   
   const [estadosOpen, setEstadosOpen] = useState(false);
+
+  React.useEffect(() => {
+    const fetchBandeja = async () => {
+      try {
+        const result = await httpClient(`${ENDPOINTS.solicitudes.base}?aprobador_id=${user?.id || ''}`, {
+          headers: { 'X-User-Id': user?.id || '' }
+        });
+        if (result.success) {
+          setSolicitudes(result.data || []);
+        }
+      } catch (err) {
+        console.error("Error fetching bandeja:", err);
+      } finally {
+        setLoading(false);
+      }
+    };
+    if (user) fetchBandeja();
+  }, [user]);
+
+  if (loading) return <Layout title="Bandeja" active="bandeja"><div className="text-center" style={{padding:'40px'}}>Cargando bandeja...</div></Layout>;
   const [marcasOpen, setMarcasOpen] = useState(false);
 
   return (
