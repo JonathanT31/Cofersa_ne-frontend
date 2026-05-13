@@ -230,7 +230,10 @@ class RequestHandler(http.server.BaseHTTPRequestHandler):
             return self._parse_multipart(content_type, body)
         else:
             body = self.read_body()
-            if content_type.startswith('application/json'):
+            try:
+                return json.loads(body)
+            except:
+                return {}
                 return json.loads(body)
             return dict(urllib.parse.parse_qsl(body.decode('utf-8')))
     

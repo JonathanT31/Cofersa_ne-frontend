@@ -1,5 +1,4 @@
 import React, { useState, useEffect } from 'react';
-import { formatCRC, formatPct, EstadoBadge } from "../../components/common/UIComponents";
 import Layout from '../../components/layout/Layout';
 
 const Usuarios = () => {
@@ -57,6 +56,10 @@ const Usuarios = () => {
       body: JSON.stringify({ id, field, value })
     });
     return (await res.json()).ok;
+  };
+
+  const handleFieldChange = (id, field, value) => {
+    setUsers(prev => prev.map(u => u.id === id ? { ...u, [field]: value } : u));
   };
 
   const onBlur = async (e, id, field) => {
@@ -133,18 +136,18 @@ const Usuarios = () => {
               {loading ? <tr><td colSpan="9" className="text-center">Cargando...</td></tr> : users.map(u => (
                 <tr key={u.id}>
                   <td>{u.id}</td>
-                  <td><input type="text" className="form-control" value={u.username} onChange={e => setUsers(prev => prev.map(x => x.id === u.id ? {...x, username: e.target.value} : x))} onBlur={e => onBlur(e, u.id, 'username')} style={{ width: '100px' }} /></td>
-                  <td><input type="text" className="form-control" value={u.nombre} onChange={e => setUsers(prev => prev.map(x => x.id === u.id ? {...x, nombre: e.target.value} : x))} onBlur={e => onBlur(e, u.id, 'nombre')} style={{ width: '100px' }} /></td>
-                  <td><input type="text" className="form-control" value={u.apellido} onChange={e => setUsers(prev => prev.map(x => x.id === u.id ? {...x, apellido: e.target.value} : x))} onBlur={e => onBlur(e, u.id, 'apellido')} style={{ width: '100px' }} /></td>
-                  <td><input type="email" className="form-control" value={u.email} onChange={e => setUsers(prev => prev.map(x => x.id === u.id ? {...x, email: e.target.value} : x))} onBlur={e => onBlur(e, u.id, 'email')} style={{ width: '160px' }} /></td>
-                  <td><select className="form-control" value={u.role} onChange={e => { setUsers(prev => prev.map(x => x.id === u.id ? {...x, role: e.target.value} : x)); handleUpdate(u.id, 'role', e.target.value); }} style={{ width: '110px' }}>
+                  <td><input type="text" className="form-control" value={u.username} onChange={e => handleFieldChange(u.id, 'username', e.target.value)} onBlur={e => onBlur(e, u.id, 'username')} style={{ width: '100px' }} /></td>
+                  <td><input type="text" className="form-control" value={u.nombre} onChange={e => handleFieldChange(u.id, 'nombre', e.target.value)} onBlur={e => onBlur(e, u.id, 'nombre')} style={{ width: '100px' }} /></td>
+                  <td><input type="text" className="form-control" value={u.apellido} onChange={e => handleFieldChange(u.id, 'apellido', e.target.value)} onBlur={e => onBlur(e, u.id, 'apellido')} style={{ width: '100px' }} /></td>
+                  <td><input type="email" className="form-control" value={u.email} onChange={e => handleFieldChange(u.id, 'email', e.target.value)} onBlur={e => onBlur(e, u.id, 'email')} style={{ width: '160px' }} /></td>
+                  <td><select className="form-control" value={u.role} onChange={e => { handleFieldChange(u.id, 'role', e.target.value); handleUpdate(u.id, 'role', e.target.value); }} style={{ width: '110px' }}>
                     {['vendedor','supervisor','gerente_ventas','compras','admin'].map(r => <option key={r} value={r}>{r}</option>)}
                   </select></td>
-                  <td><select className="form-control" value={u.supervisor_id || ''} onChange={e => { setUsers(prev => prev.map(x => x.id === u.id ? {...x, supervisor_id: e.target.value} : x)); handleUpdate(u.id, 'supervisor_id', e.target.value); }} style={{ width: '130px' }}>
+                  <td><select className="form-control" value={u.supervisor_id || ''} onChange={e => { handleFieldChange(u.id, 'supervisor_id', e.target.value); handleUpdate(u.id, 'supervisor_id', e.target.value); }} style={{ width: '130px' }}>
                     <option value="">N/A</option>
                     {supervisors.map(s => <option key={s.id} value={s.id}>{s.nombre} {s.apellido}</option>)}
                   </select></td>
-                  <td><select className="form-control" value={u.status} onChange={e => { setUsers(prev => prev.map(x => x.id === u.id ? {...x, status: e.target.value} : x)); handleUpdate(u.id, 'status', e.target.value); }} style={{ width: '80px' }}>
+                  <td><select className="form-control" value={u.status} onChange={e => { handleFieldChange(u.id, 'status', e.target.value); handleUpdate(u.id, 'status', e.target.value); }} style={{ width: '80px' }}>
                     <option value="activo">Activo</option><option value="inactivo">Inactivo</option>
                   </select></td>
                   <td><button className="btn btn-warning btn-sm" onClick={() => resetPw(u.id, u.username)}>Reset PW</button> <button className="btn btn-danger btn-sm" onClick={() => handleDelete(u.id)}>✕</button></td>

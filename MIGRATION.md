@@ -58,3 +58,24 @@ Para soportar el frontend en React, se añadieron múltiples endpoints que devue
     - `npm run dev` (configurado para actuar como proxy hacia el puerto 8080 si es necesario, o simplemente apuntar las URLs de API).
 
 *Nota: Para producción, el frontend debe construirse con `npm run build` y los archivos resultantes en `dist/` pueden ser servidos por el mismo servidor Python o un servidor web dedicado.*
+
+## Integración con Supabase (Próximos Pasos)
+
+Para migrar completamente a Supabase, se recomienda seguir este plan:
+
+1.  **Migración de Datos**:
+    - Exportar las tablas de SQLite (`users`, `reglas`, `presupuesto`, `solicitudes`, `solicitud_skus`) a CSV o SQL.
+    - Importar en Supabase usando el Editor SQL o el importador de CSV.
+2.  **Autenticación**:
+    - Reemplazar `AuthContext.jsx` y `Login.jsx` para usar `supabase.auth.signInWithPassword`.
+    - Configurar políticas RLS (Row Level Security) en Supabase para replicar la lógica de visibilidad por roles (`vendedor` vs `admin`).
+3.  **Lógica de Negocio (Backend)**:
+    - Los cálculos bidireccionales y la búsqueda de Infocompras pueden permanecer en el frontend.
+    - La lógica de aprobación (actualización de estados, generación de folios) debe moverse a **Supabase Edge Functions** o Procedimientos Almacenados (RPC) para garantizar la integridad de los datos.
+4.  **Reemplazo de httpClient**:
+    - Sustituir las llamadas a `/api/*` en los componentes React por llamadas al cliente de Supabase:
+      ```javascript
+      const { data, error } = await supabase.from('solicitudes').select('*').eq('vendedor_id', userId);
+      ```
+
+La estructura actual en React facilita esta transición, ya que las vistas están desacopladas de la implementación específica del servidor.
