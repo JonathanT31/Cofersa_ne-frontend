@@ -10,15 +10,49 @@ export const AuthProvider = ({ children }) => {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    let autoLogoutTimer;
+
+    const resetAutoLogout = () => {
+      clearTimeout(autoLogoutTimer);
+      // Auto logout después de 2 horas (7200000 ms) de inactividad
+      autoLogoutTimer = setTimeout(async () => {
+        console.log('Sesión expirada por inactividad.');
+        await supabase.auth.signOut();
+        setUser(null);
+      }, 7200000); 
+    };
+
+    // Agregar listeners para inactividad
+    const events = ['mousedown', 'keydown', 'scroll', 'touchstart'];
+    const handleUserActivity = () => {
+      if (user) resetAutoLogout();
+    };
+
+    events.forEach(event => window.addEventListener(event, handleUserActivity));
+
     // 1. Check active session on mount
     const checkSession = async () => {
       try {
-        const { data: { session } } = await supabase.auth.getSession();
+        const { data: { session }, error } = await supabase.auth.getSession();
+        
+        if (error) {
+          console.error('Error al obtener sesión (posible caché corrupta):', error);
+          await supabase.auth.signOut(); // Limpiar caché
+          setUser(null);
+          return;
+        }
+
         if (session) {
           await fetchProfile(session.user);
+          resetAutoLogout();
+        } else {
+          setUser(null);
         }
       } catch (err) {
-        console.error('Error al verificar sesión:', err);
+        console.error('Excepción crítica al verificar sesión:', err);
+        // Si hay una excepción grave, intentamos limpiar el almacenamiento para evitar bloqueos
+        localStorage.removeItem('supabase.auth.token');
+        setUser(null);
       } finally {
         setLoading(false);
       }
@@ -26,39 +60,49 @@ export const AuthProvider = ({ children }) => {
 
     checkSession();
 
-    // Timeout de seguridad: si después de 5 segundos sigue cargando, forzar el inicio
-    const timer = setTimeout(() => {
-      setLoading(false);
-    }, 5000);
+    // Failsafe absoluto: forzar fin de carga después de 3 segundos sí o sí
+    const failSafeTimer = setTimeout(() => {
+      if (loading) {
+        console.warn('Failsafe activado: forzando fin de carga.');
+        setLoading(false);
+      }
+    }, 3000);
 
     // 2. Listen for auth changes
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (_event, session) => {
-      if (session) {
-        await fetchProfile(session.user);
-      } else {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
+      if (event === 'SIGNED_OUT' || !session) {
         setUser(null);
+        clearTimeout(autoLogoutTimer);
+      } else if (session) {
+        await fetchProfile(session.user);
+        resetAutoLogout();
       }
+      setLoading(false);
     });
 
-    return () => subscription.unsubscribe();
-  }, []);
+    return () => {
+      subscription.unsubscribe();
+      clearTimeout(failSafeTimer);
+      clearTimeout(autoLogoutTimer);
+      events.forEach(event => window.removeEventListener(event, handleUserActivity));
+    };
+  }, [user]);
 
   const fetchProfile = async (authUser) => {
     if (!authUser) return;
 
-    // Failsafe: Si la consulta a la base de datos tarda más de 3 segundos, 
-    // usamos la metadata de la sesión para no bloquear al usuario.
-    const profilePromise = supabase
-      .from('profiles')
-      .select('*')
-      .eq('id', authUser.id)
-      .single();
-
-    const timeoutPromise = new Promise((_, reject) => 
-      setTimeout(() => reject(new Error('Timeout fetching profile')), 3000)
-    );
-
     try {
+      // Timeout agresivo de 2 segundos para no bloquear al usuario
+      const profilePromise = supabase
+        .from('profiles')
+        .select('*')
+        .eq('id', authUser.id)
+        .maybeSingle();
+
+      const timeoutPromise = new Promise((_, reject) => 
+        setTimeout(() => reject(new Error('Timeout')), 2000)
+      );
+
       const { data, error } = await Promise.race([profilePromise, timeoutPromise]);
       
       if (error || !data) {
@@ -71,7 +115,6 @@ export const AuthProvider = ({ children }) => {
         setUser({ ...authUser, ...data });
       }
     } catch (err) {
-      console.warn('Usando perfil de emergencia por error o timeout:', err.message);
       setUser({
         ...authUser,
         role: authUser.user_metadata?.role || 'vendedor',
