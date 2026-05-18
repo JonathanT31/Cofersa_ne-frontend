@@ -9,7 +9,10 @@ export const AuthProvider = ({ children }) => {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
 
+  // 1. Manejo del temporizador de inactividad (depende de [user])
   useEffect(() => {
+    if (!user) return;
+
     let autoLogoutTimer;
 
     const resetAutoLogout = () => {
@@ -22,18 +25,32 @@ export const AuthProvider = ({ children }) => {
       }, 7200000); 
     };
 
-    // Agregar listeners para inactividad
-    const events = ['mousedown', 'keydown', 'scroll', 'touchstart'];
     const handleUserActivity = () => {
-      if (user) resetAutoLogout();
+      resetAutoLogout();
     };
 
+    const events = ['mousedown', 'keydown', 'scroll', 'touchstart'];
     events.forEach(event => window.addEventListener(event, handleUserActivity));
 
-    // 1. Check active session on mount
+    resetAutoLogout(); // Iniciar temporizador al montar/cambiar usuario
+
+    return () => {
+      clearTimeout(autoLogoutTimer);
+      events.forEach(event => window.removeEventListener(event, handleUserActivity));
+    };
+  }, [user]);
+
+  // 2. Inicialización de sesión y escucha de cambios de autenticación (se ejecuta SOLO una vez al montar)
+  useEffect(() => {
+    // 1. Verificar sesión activa al montar con un tiempo de espera de 2 segundos para evitar bloqueos
     const checkSession = async () => {
       try {
-        const { data: { session }, error } = await supabase.auth.getSession();
+        const sessionPromise = supabase.auth.getSession();
+        const timeoutPromise = new Promise((_, reject) => 
+          setTimeout(() => reject(new Error('Límite de tiempo de sesión excedido')), 2000)
+        );
+
+        const { data: { session }, error } = await Promise.race([sessionPromise, timeoutPromise]);
         
         if (error) {
           console.error('Error al obtener sesión (posible caché corrupta):', error);
@@ -44,14 +61,22 @@ export const AuthProvider = ({ children }) => {
 
         if (session) {
           await fetchProfile(session.user);
-          resetAutoLogout();
         } else {
           setUser(null);
         }
       } catch (err) {
-        console.error('Excepción crítica al verificar sesión:', err);
-        // Si hay una excepción grave, intentamos limpiar el almacenamiento para evitar bloqueos
-        localStorage.removeItem('supabase.auth.token');
+        console.error('Excepción crítica o timeout al verificar sesión:', err);
+        // Limpiamos todo el almacenamiento relacionado con auth-token de Supabase para evitar bloqueos
+        try {
+          localStorage.removeItem('supabase.auth.token');
+          Object.keys(localStorage).forEach(key => {
+            if (key.includes('auth-token') || key.startsWith('sb-')) {
+              localStorage.removeItem(key);
+            }
+          });
+        } catch (storageErr) {
+          console.error('Error limpiando localStorage:', storageErr);
+        }
         setUser(null);
       } finally {
         setLoading(false);
@@ -62,20 +87,15 @@ export const AuthProvider = ({ children }) => {
 
     // Failsafe absoluto: forzar fin de carga después de 3 segundos sí o sí
     const failSafeTimer = setTimeout(() => {
-      if (loading) {
-        console.warn('Failsafe activado: forzando fin de carga.');
-        setLoading(false);
-      }
+      setLoading(false);
     }, 3000);
 
     // 2. Listen for auth changes
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
       if (event === 'SIGNED_OUT' || !session) {
         setUser(null);
-        clearTimeout(autoLogoutTimer);
       } else if (session) {
         await fetchProfile(session.user);
-        resetAutoLogout();
       }
       setLoading(false);
     });
@@ -83,10 +103,8 @@ export const AuthProvider = ({ children }) => {
     return () => {
       subscription.unsubscribe();
       clearTimeout(failSafeTimer);
-      clearTimeout(autoLogoutTimer);
-      events.forEach(event => window.removeEventListener(event, handleUserActivity));
     };
-  }, [user]);
+  }, []);
 
   const fetchProfile = async (authUser) => {
     if (!authUser) return;
