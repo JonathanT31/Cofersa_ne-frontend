@@ -1,14 +1,16 @@
 import React, { useState } from 'react';
 import { Link } from 'react-router-dom';
 import Layout from '../../components/layout/Layout';
+import { supabase } from '../../api/supabaseClient';
 
 const CambiarPassword = () => {
   const [actual, setActual] = useState('');
   const [nueva, setNueva] = useState('');
   const [confirm, setConfirm] = useState('');
   const [msg, setMsg] = useState(null);
+  const [loading, setLoading] = useState(false);
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
     if (!actual || !nueva || !confirm) {
       setMsg({ type: 'danger', text: 'Todos los campos son obligatorios.' });
@@ -23,11 +25,27 @@ const CambiarPassword = () => {
       return;
     }
 
-    // Simular éxito
-    setMsg({ type: 'success', text: 'Contraseña actualizada correctamente.' });
-    setActual('');
-    setNueva('');
-    setConfirm('');
+    setLoading(true);
+    setMsg(null);
+
+    try {
+      // Supabase updateUser updates the password of the currently logged-in user
+      const { error } = await supabase.auth.updateUser({
+        password: nueva
+      });
+
+      if (error) throw error;
+
+      setMsg({ type: 'success', text: 'Contraseña actualizada correctamente.' });
+      setActual('');
+      setNueva('');
+      setConfirm('');
+    } catch (err) {
+      console.error('Error al cambiar contraseña:', err);
+      setMsg({ type: 'danger', text: err.message || 'Error al actualizar la contraseña.' });
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
@@ -44,6 +62,7 @@ const CambiarPassword = () => {
               placeholder="Tu contraseña actual"
               value={actual}
               onChange={(e) => setActual(e.target.value)}
+              disabled={loading}
             />
           </div>
           
@@ -55,6 +74,7 @@ const CambiarPassword = () => {
               placeholder="Nueva contraseña"
               value={nueva}
               onChange={(e) => setNueva(e.target.value)}
+              disabled={loading}
             />
           </div>
           
@@ -66,6 +86,7 @@ const CambiarPassword = () => {
               placeholder="Repite la nueva contraseña"
               value={confirm}
               onChange={(e) => setConfirm(e.target.value)}
+              disabled={loading}
             />
           </div>
           
@@ -76,8 +97,12 @@ const CambiarPassword = () => {
           )}
           
           <div className="actions-bar">
-            <button type="submit" className="btn btn-primary">Guardar Contraseña</button>
-            <Link to="/" className="btn btn-outline">Cancelar</Link>
+            <button type="submit" className="btn btn-primary" disabled={loading}>
+              {loading ? 'Guardando...' : 'Guardar Contraseña'}
+            </button>
+            <Link to="/" className={`btn btn-outline ${loading ? 'disabled' : ''}`} style={{ pointerEvents: loading ? 'none' : 'auto' }}>
+              Cancelar
+            </Link>
           </div>
         </form>
       </div>
