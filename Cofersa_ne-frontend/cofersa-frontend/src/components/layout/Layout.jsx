@@ -48,7 +48,6 @@ const Layout = ({ children, title, active }) => {
     navItems.push({ href: '/admin/password-resets', label: 'Reseteos PW', key: 'pwresets' });
     navItems.push({ href: '/admin/solicitudes', label: 'Todas Solicitudes', key: 'todas' });
     navItems.push({ href: '/admin/auditoria', label: 'Auditoría', key: 'auditoria' });
-    navItems.push({ href: '/admin/config', label: 'Configuración', key: 'config' });
   }
 
   navItems.push({ href: '/cambiar-password', label: 'Mi Contraseña', key: 'cambiar_pw' });

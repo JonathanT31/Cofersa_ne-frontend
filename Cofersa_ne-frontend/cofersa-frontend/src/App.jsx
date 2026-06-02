@@ -42,7 +42,7 @@ function App() {
           <Route path="/admin/password-resets" element={<ProtectedRoute allowedRoles={['admin']}><PasswordResets /></ProtectedRoute>} />
           <Route path="/admin/solicitudes" element={<ProtectedRoute allowedRoles={['admin', 'compras', 'gerente_ventas']}><TodasSolicitudes /></ProtectedRoute>} />
           <Route path="/admin/auditoria" element={<ProtectedRoute allowedRoles={['admin']}><Auditoria /></ProtectedRoute>} />
-          <Route path="/admin/config" element={<ProtectedRoute allowedRoles={['admin']}><Configuracion /></ProtectedRoute>} />
+          
           
           <Route path="/cambiar-password" element={<ProtectedRoute><CambiarPassword /></ProtectedRoute>} />
           

@@ -44,6 +44,7 @@ const NuevaSolicitud = () => {
   
   const [clienteCodigo, setClienteCodigo] = useState('');
   const [clienteNombre, setClienteNombre] = useState('');
+  const [listaPrecios, setListaPrecios] = useState('');
   const [numeroPedido, setNumeroPedido] = useState('');
   const [justificacion, setJustificacion] = useState('');
   
@@ -63,22 +64,12 @@ const NuevaSolicitud = () => {
   
   const [marcas, setMarcas] = useState([]);
   const [reglasDict, setReglasDict] = useState({});
-  const [infocStatus, setInfocStatus] = useState('loading');
+  const [searchResults, setSearchResults] = useState([]);
+  const [loadingProducts, setLoadingProducts] = useState(false);
   const [formErrors, setFormErrors] = useState([]);
   const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {
-    // Load Infocompras data
-    const loadInfoc = async () => {
-      try {
-        setInfocStatus('loading');
-        await infocomprasService.loadData();
-        setInfocStatus('ready');
-      } catch (err) {
-        setInfocStatus('error');
-      }
-    };
-    
     // Fetch available brands from rules
     const fetchMarcas = async () => {
       const { data, error } = await supabase
@@ -94,9 +85,34 @@ const NuevaSolicitud = () => {
       }
     };
 
-    loadInfoc();
     fetchMarcas();
   }, []);
+
+  // Debounced search for products (n8n Webhook)
+  useEffect(() => {
+    if (!infocSearch.trim()) {
+      setSearchResults([]);
+      return;
+    }
+    if (!clienteCodigo.trim() || !clienteNombre.trim() || !listaPrecios.trim()) {
+      setSearchResults([]);
+      return;
+    }
+
+    const delayDebounceFn = setTimeout(async () => {
+      setLoadingProducts(true);
+      try {
+        const results = await infocomprasService.search(infocSearch, clienteCodigo, clienteNombre, listaPrecios);
+        setSearchResults(results);
+      } catch (err) {
+        console.error('Error fetching products from webhook:', err);
+      } finally {
+        setLoadingProducts(false);
+      }
+    }, 400);
+
+    return () => clearTimeout(delayDebounceFn);
+  }, [infocSearch, clienteCodigo, clienteNombre, listaPrecios]);
 
   // Handle clicking outside to close client dropdowns
   useEffect(() => {
@@ -125,7 +141,7 @@ const NuevaSolicitud = () => {
       try {
         const { data, error } = await supabase
           .from('clientes')
-          .select('cod_cliente, nombre_cliente')
+          .select('cod_cliente, nombre_cliente, lista_precios')
           .ilike('cod_cliente', `%${clienteCodigo}%`)
           .limit(15);
         if (!error && data) {
@@ -156,7 +172,7 @@ const NuevaSolicitud = () => {
       try {
         const { data, error } = await supabase
           .from('clientes')
-          .select('cod_cliente, nombre_cliente')
+          .select('cod_cliente, nombre_cliente, lista_precios')
           .ilike('nombre_cliente', `%${clienteNombre}%`)
           .limit(15);
         if (!error && data) {
@@ -175,6 +191,7 @@ const NuevaSolicitud = () => {
   const handleSelectCliente = (cli) => {
     setClienteCodigo(cli.cod_cliente);
     setClienteNombre(cli.nombre_cliente);
+    setListaPrecios(cli.lista_precios);
     setSelectedClient(cli);
     setShowCodigoDropdown(false);
     setShowNombreDropdown(false);
@@ -192,7 +209,7 @@ const NuevaSolicitud = () => {
         codigo_sku: initialData.codigo_sku || '',
         descripcion: initialData.descripcion || '',
         cantidad: 1,
-        precio_mayoreo: initialData.precio_mayoreo || '',
+        precio: initialData.precio || '',
         precio_base: initialData.precio_base || '',
         pct: '',
         psol: '',
@@ -272,6 +289,7 @@ const NuevaSolicitud = () => {
           body: JSON.stringify({
             cliente_codigo: clienteCodigo,
             cliente_nombre: clienteNombre,
+            lista_precios: listaPrecios,
             numero_pedido: numeroPedido,
             justificacion,
             skus: skus.map(s => ({
@@ -302,32 +320,49 @@ const NuevaSolicitud = () => {
     }
   };
 
-  const searchResults = infocomprasService.search(infocSearch);
-
   const handleAddFromInfocompras = (producto) => {
     addSkuRow({
       marca: producto.MARCA,
       codigo_sku: producto.ARTICULO1,
       descripcion: producto.DESCRIPCION,
-      precio_mayoreo: producto.PRECIO_MAYOREO,
-      precio_base: producto.PRECIO_MAYOREO, // Often used as base or from another column
+      precio: producto.PRECIO,
+      precio_base: producto.PRECIO, // Often used as base or from another column
       bdf: producto.BDF
     });
     setInfocSearch('');
   };
 
-  const handleBulkAdd = () => {
+  const handleBulkAdd = async () => {
+    if (!clienteCodigo.trim() || !clienteNombre.trim()) {
+      alert("Debe seleccionar un cliente antes de agregar productos masivamente.");
+      return;
+    }
     const lines = bulkCodes.split(/[\n,]+/).map(s => s.trim()).filter(Boolean);
-    let addedCount = 0;
-    lines.forEach(code => {
-      const match = infocomprasService.data.find(p => p.ARTICULO1 === code);
-      if (match) {
-        handleAddFromInfocompras(match);
+    if (lines.length === 0) return;
+
+    setSubmitting(true);
+    try {
+      const matches = await infocomprasService.bulkSearch(lines, clienteCodigo, clienteNombre, listaPrecios);
+      let addedCount = 0;
+      matches.forEach(match => {
+        addSkuRow({
+          marca: match.MARCA,
+          codigo_sku: match.ARTICULO1,
+          descripcion: match.DESCRIPCION,
+          precio: match.PRECIO,
+          precio_base: match.PRECIO,
+          bdf: match.BDF
+        });
         addedCount++;
-      }
-    });
-    alert(`Se agregaron ${addedCount} productos de ${lines.length} códigos ingresados.`);
-    setBulkCodes('');
+      });
+      alert(`Se agregaron ${addedCount} productos de ${lines.length} códigos ingresados.`);
+      setBulkCodes('');
+    } catch (err) {
+      console.error('Error in bulk search:', err);
+      alert('Error al buscar los productos masivamente.');
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   return (
@@ -438,11 +473,10 @@ const NuevaSolicitud = () => {
 
       <div className="card" style={{ marginBottom: '14px', border: '2px solid #1a5276' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '8px', marginBottom: '12px' }}>
-          <strong style={{ fontSize: '14px' }}>🔍 Búsqueda de Productos — Infocompras</strong>
-          <span style={{ fontSize: '12px', color: infocStatus === 'error' ? 'red' : '#888' }}>
-            {infocStatus === 'loading' ? 'Cargando Infocompras...' : 
-             infocStatus === 'error' ? 'Error al cargar Infocompras' : 
-             `${infocomprasService.data.length.toLocaleString()} productos cargados`}
+          <strong style={{ fontSize: '14px' }}>🔍 Búsqueda de Productos — Webhook n8n</strong>
+          <span style={{ fontSize: '12px', color: !clienteCodigo.trim() || !clienteNombre.trim() ? '#dc3545' : '#888' }}>
+            {!clienteCodigo.trim() || !clienteNombre.trim() ? '⚠️ Seleccione un cliente primero' : 
+             loadingProducts ? 'Buscando...' : 'Listo'}
           </span>
         </div>
 
@@ -469,23 +503,33 @@ const NuevaSolicitud = () => {
               <input 
                 type="text" 
                 className="form-control" 
-                placeholder="Buscar por artículo, descripción, marca o código AFV..." 
+                placeholder={clienteCodigo.trim() && clienteNombre.trim() ? "Buscar por artículo, descripción, marca..." : "⚠️ Debe seleccionar un cliente antes de buscar..."} 
                 value={infocSearch}
                 onChange={e => setInfocSearch(e.target.value)}
-                disabled={infocStatus !== 'ready' || submitting}
+                disabled={!clienteCodigo.trim() || !clienteNombre.trim() || submitting}
               />
-              {infocSearch && searchResults.length > 0 && (
+              {infocSearch && (loadingProducts || searchResults.length > 0 || (infocSearch.trim().length >= 3 && !loadingProducts)) && (
                 <div style={{ position: 'absolute', top: '100%', left: 0, right: 0, background: '#fff', border: '1px solid #ccc', zIndex: 10, maxHeight: '200px', overflowY: 'auto', boxShadow: '0 4px 6px rgba(0,0,0,0.1)' }}>
-                  {searchResults.map(p => (
-                    <div 
-                      key={p.ARTICULO1} 
-                      style={{ padding: '8px 12px', cursor: 'pointer', borderBottom: '1px solid #eee', fontSize: '13px' }}
-                      onClick={() => handleAddFromInfocompras(p)}
-                    >
-                      <strong style={{ color: '#1a5276' }}>{p.ARTICULO1}</strong> - {p.DESCRIPCION} <span style={{ color: '#888' }}>({p.MARCA})</span>
-                      <div style={{ fontSize: '11px', color: '#555' }}>Precio: {formatCRC(p.PRECIO_MAYOREO)}</div>
+                  {loadingProducts ? (
+                    <div style={{ padding: '12px', color: '#64748b', textAlign: 'center', fontSize: '13px' }}>
+                      🔍 Buscando productos...
                     </div>
-                  ))}
+                  ) : searchResults.length > 0 ? (
+                    searchResults.map(p => (
+                      <div 
+                        key={p.ARTICULO1} 
+                        style={{ padding: '8px 12px', cursor: 'pointer', borderBottom: '1px solid #eee', fontSize: '13px' }}
+                        onClick={() => handleAddFromInfocompras(p)}
+                      >
+                        <strong style={{ color: '#1a5276' }}>{p.ARTICULO1}</strong> - {p.DESCRIPCION} <span style={{ color: '#888' }}>({p.MARCA})</span>
+                        <div style={{ fontSize: '11px', color: '#555' }}>Precio: {formatCRC(p.PRECIO)}</div>
+                      </div>
+                    ))
+                  ) : (
+                    <div style={{ padding: '12px', color: '#64748b', textAlign: 'center', fontSize: '13px' }}>
+                      No se encontraron productos.
+                    </div>
+                  )}
                 </div>
               )}
             </div>
@@ -494,13 +538,13 @@ const NuevaSolicitud = () => {
           <div>
             <textarea 
               className="form-control" 
-              placeholder="Ingresa códigos..." 
+              placeholder={clienteCodigo.trim() && clienteNombre.trim() ? "Ingresa códigos..." : "⚠️ Debe seleccionar un cliente antes de ingresar códigos..."} 
               style={{ minHeight: '100px' }}
               value={bulkCodes}
               onChange={e => setBulkCodes(e.target.value)}
-              disabled={infocStatus !== 'ready' || submitting}
+              disabled={!clienteCodigo.trim() || !clienteNombre.trim() || submitting}
             ></textarea>
-            <button className="btn btn-primary" onClick={handleBulkAdd} disabled={submitting}>Agregar Masivo</button>
+            <button className="btn btn-primary" onClick={handleBulkAdd} disabled={!clienteCodigo.trim() || !clienteNombre.trim() || submitting}>Agregar Masivo</button>
           </div>
         )}
       </div>
