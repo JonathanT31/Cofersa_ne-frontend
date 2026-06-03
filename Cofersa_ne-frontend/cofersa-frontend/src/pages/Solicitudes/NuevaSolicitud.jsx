@@ -435,7 +435,7 @@ const NuevaSolicitud = () => {
 
       <div className="card" style={{ marginBottom: '14px' }}>
         <div className="card-header">👤 Datos del Cliente</div>
-        <div className="grid-3">
+        <div className="grid-4">
           <div className="form-group client-autocomplete-container" style={{ position: 'relative' }}>
             <label>Código de Cliente *</label>
             <input 
@@ -523,6 +523,17 @@ const NuevaSolicitud = () => {
                 )}
               </div>
             )}
+          </div>
+          <div className="form-group">
+            <label>Lista de Precios</label>
+            <input 
+              type="text" 
+              className="form-control" 
+              value={listaPrecios} 
+              onChange={e => setListaPrecios(e.target.value)} 
+              placeholder="LPV1" 
+              disabled={submitting} 
+            />
           </div>
           <div className="form-group">
             <label>Número de Pedido</label>
