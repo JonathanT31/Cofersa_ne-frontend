@@ -17,7 +17,7 @@ load_dotenv()
 
 def send_n8n_webhook(event_type: str, solicitud: Dict[str, Any], skus: List[Dict[str, Any]], extra_info: Dict[str, Any] = None) -> bool:
     """Send payload to n8n webhook on request creation or approval."""
-    url = "https://sandboxn8n.mayoreo.biz/webhook-test/28efcada-13fd-4552-abe2-7aace29324b6"
+    url = os.getenv("N8N_EMAIL_WEBHOOK_URL", "https://sandboxn8n.mayoreo.biz/webhook-test/28efcada-13fd-4552-abe2-7aace29324b6")
     payload = {
         "event": event_type,  # "creada" o "aprobada"
         "solicitud": solicitud,
@@ -39,6 +39,7 @@ def send_n8n_webhook(event_type: str, solicitud: Dict[str, Any], skus: List[Dict
     except Exception as e:
         print(f"Error calling n8n webhook: {e}")
         return False
+
 
 
 # --- CONFIGURACIÓN GLOBAL ---
@@ -68,6 +69,8 @@ SMTP_CONFIG = {
     "from": os.getenv("SMTP_USER", "")
 }
 BASE_URL = os.getenv("VITE_BASE_URL", "http://localhost:5173")
+COMPRAS_EMAIL = os.getenv("COMPRAS_EMAIL", "compras@cofersa.cr")
+
 
 # --- FUNCIONES DE AYUDA (BUSINESS LOGIC) ---
 
@@ -234,10 +237,39 @@ async def crear_solicitud(data: Dict[str, Any]):
             "bdf": sku.get("bdf")
         }).execute()
 
-    # Call n8n webhook on creation
-    send_n8n_webhook("creada", solicitud, skus, {"vendedor": user})
+    # Call n8n webhook on creation — include recipient email so n8n knows where to send
+    # Determine who receives the email notification
+    aprobador_info = {}
+    email_destinatario = None
+
+    if aprobador_nivel == "supervisor" and aprobador_id:
+        try:
+            sup_res = supabase.table("profiles").select("*").eq("id", aprobador_id).single().execute()
+            aprobador_info = sup_res.data or {}
+            email_destinatario = aprobador_info.get("email")
+        except Exception as e:
+            print(f"No se pudo obtener perfil del supervisor: {e}")
+    elif aprobador_nivel == "compras":
+        # Fall back to the compras email defined in .env
+        email_destinatario = COMPRAS_EMAIL
+        # Try to get the compras profile for richer info
+        try:
+            compras_res = supabase.table("profiles").select("*").eq("role", "compras").eq("status", "activo").limit(1).execute()
+            if compras_res.data:
+                aprobador_info = compras_res.data[0]
+                email_destinatario = aprobador_info.get("email") or COMPRAS_EMAIL
+        except Exception as e:
+            print(f"No se pudo obtener perfil de compras: {e}")
+
+    send_n8n_webhook("creada", solicitud, skus, {
+        "vendedor": user,
+        "aprobador_nivel": aprobador_nivel,
+        "aprobador": aprobador_info,
+        "email_destinatario": email_destinatario,
+    })
 
     return {"status": "success", "solicitud_id": solicitud["id"], "folio": folio}
+
 
 @app.post("/api/solicitudes/aprobar")
 async def aprobar_solicitud(sol_id: int, user_id: str, comentario: str = Body(None)):
