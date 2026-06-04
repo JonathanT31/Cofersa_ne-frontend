@@ -326,40 +326,63 @@ const NuevaSolicitud = () => {
       codigo_sku: producto.ARTICULO1,
       descripcion: producto.DESCRIPCION,
       precio: producto.PRECIO,
-      precio_base: producto.PRECIO, // Often used as base or from another column
+      precio_base: producto.PRECIO,
       bdf: producto.BDF
     });
     setInfocSearch('');
   };
 
   const handleBulkAdd = async () => {
-    if (!clienteCodigo.trim() || !clienteNombre.trim()) {
-      alert("Debe seleccionar un cliente antes de agregar productos masivamente.");
+    if (!clienteCodigo.trim() || !clienteNombre.trim() || !listaPrecios.trim()) {
+      alert("Debe seleccionar un cliente con una lista de precios válida antes de agregar productos masivamente.");
       return;
     }
+    
     const lines = bulkCodes.split(/[\n,]+/).map(s => s.trim()).filter(Boolean);
     if (lines.length === 0) return;
 
     setSubmitting(true);
     try {
       const matches = await infocomprasService.bulkSearch(lines, clienteCodigo, clienteNombre, listaPrecios);
+      
+      if (matches.length === 0) {
+        alert("No se encontraron productos coincidentes para los códigos ingresados.");
+        return;
+      }
+
       let addedCount = 0;
-      matches.forEach(match => {
-        addSkuRow({
-          marca: match.MARCA,
-          codigo_sku: match.ARTICULO1,
-          descripcion: match.DESCRIPCION,
-          precio: match.PRECIO,
-          precio_base: match.PRECIO,
-          bdf: match.BDF
+      setSkus(prevSkus => {
+        let currentIdBase = prevSkus.length > 0 ? Math.max(...prevSkus.map(s => s.id)) : 0;
+        
+        const newRows = matches.map(match => {
+          currentIdBase++;
+          addedCount++;
+          return {
+            id: currentIdBase,
+            marca: match.MARCA || '',
+            codigo_sku: match.ARTICULO || '',
+            descripcion: match.DESCRIPCION || '',
+            cantidad: 1,
+            precio: match.PRECIO || '',
+            precio_base: match.PRECIO || '',
+            pct: '',
+            psol: '',
+            mdesc: 0,
+            bdf: match.BDF || '',
+            lastEdited: 'pct'
+          };
         });
-        addedCount++;
+
+        setSkuCounter(currentIdBase);
+        
+        return [...prevSkus, ...newRows];
       });
-      alert(`Se agregaron ${addedCount} productos de ${lines.length} códigos ingresados.`);
+      
+      alert(`Se agregaron ${lines.length} productos exitosamente.`);
       setBulkCodes('');
     } catch (err) {
-      console.error('Error in bulk search:', err);
-      alert('Error al buscar los productos masivamente.');
+      console.error('Error in bulk search execution:', err);
+      alert('Ocurrió un error al procesar la búsqueda masiva en el servidor.');
     } finally {
       setSubmitting(false);
     }
@@ -538,7 +561,7 @@ const NuevaSolicitud = () => {
           <div>
             <textarea 
               className="form-control" 
-              placeholder={clienteCodigo.trim() && clienteNombre.trim() ? "Ingresa códigos..." : "⚠️ Debe seleccionar un cliente antes de ingresar códigos..."} 
+              placeholder={clienteCodigo.trim() && clienteNombre.trim() ? "Ingresar códigos..." : "⚠️ Debe seleccionar un cliente antes de ingresar códigos..."} 
               style={{ minHeight: '100px' }}
               value={bulkCodes}
               onChange={e => setBulkCodes(e.target.value)}

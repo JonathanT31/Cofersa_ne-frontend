@@ -31,6 +31,7 @@ export const infocomprasService = {
         DESCRIPCION:    row.DESCRIPCION    || row.descripcion   || '',
         MARCA:          row.MARCA          || row.marca         || '',
         BDF:            row.BDF            || row.bdf           || '',
+        PROV:           row.PROV           || row.prov          || '',
         PRECIO: parseFloat(row.PRECIO || row.precio || 0)
       }));
     } catch (err) {
@@ -39,7 +40,7 @@ export const infocomprasService = {
     }
   },
 
-  async bulkSearch(codes, clientCode, clientName) {
+  async bulkSearch(codes, clientCode, clientName, listaPrecios) {
     if (!N8N_WEBHOOK_URL) {
       console.warn('VITE_N8N_WEBHOOK_URL is not defined in .env');
       return [];
@@ -64,11 +65,12 @@ export const infocomprasService = {
       const items = Array.isArray(json) ? json : (json.rows || json.results || []);
       
       return items.map(row => ({
-        ARTICULO1:      row.ARTICULO1      || row.articulo      || '',
+        ARTICULO:       row.ARTICULO      || row.articulo      || '',
         CODIGO_AFV:     row.CODIGO_AFV     || row.codigo_afv    || '',
         DESCRIPCION:    row.DESCRIPCION    || row.descripcion   || '',
         MARCA:          row.MARCA          || row.marca         || '',
         BDF:            row.BDF            || row.bdf           || '',
+        PROV:           row.PROV           || row.prov          || '',
         PRECIO: parseFloat(row.PRECIO || row.precio || 0)
       }));
     } catch (err) {
