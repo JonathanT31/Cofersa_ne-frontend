@@ -63,6 +63,9 @@ const NuevaSolicitud = () => {
   const [infocSearch, setInfocSearch] = useState('');
   const [bulkCodes, setBulkCodes] = useState('');
   
+  const [presupuestoByMarca, setPresupuestoByMarca] = useState({});
+  const [gastoByMarca, setGastoByMarca] = useState({});
+  
   const [marcas, setMarcas] = useState([]);
   const [reglasDict, setReglasDict] = useState({});
   const [searchResults, setSearchResults] = useState([]);
@@ -114,6 +117,94 @@ const NuevaSolicitud = () => {
 
     fetchMarcas();
   }, []);
+
+  useEffect(() => {
+    const fetchPresupuestoYGasto = async () => {
+      if (!user) return;
+      
+      try {
+        const { data: profilesData } = await supabase.from('profiles').select('*');
+        const profilesMap = {};
+        if (profilesData) {
+          profilesData.forEach(p => profilesMap[p.id] = p);
+        }
+
+        const { data: pptoData } = await supabase.from('presupuesto').select('*');
+        const budgetMap = {};
+        if (pptoData) {
+          pptoData.forEach(p => {
+            const pptoVal = p.ppto_mensual_crc || p.ppto_mensual || 0;
+            
+            const matchName = (field, targetStr) => {
+              if (!field || !targetStr) return false;
+              return field.trim().toLowerCase() === targetStr.trim().toLowerCase();
+            };
+
+            const matchAsesor = p.asesor && user && (
+              matchName(p.asesor, user.username) || 
+              matchName(p.asesor, user.nombre) || 
+              matchName(p.asesor, user.email)
+            );
+
+            const matchSupervisor = p.supervisor && user && (
+              matchName(p.supervisor, user.username) || 
+              matchName(p.supervisor, user.nombre) || 
+              matchName(p.supervisor, user.email)
+            );
+
+            if (user.role === 'vendedor') {
+              if (matchAsesor) {
+                budgetMap[p.marca] = (budgetMap[p.marca] || 0) + pptoVal;
+              }
+            } else if (user.role === 'supervisor') {
+              if (matchSupervisor) {
+                budgetMap[p.marca] = (budgetMap[p.marca] || 0) + pptoVal;
+              }
+            } else {
+              budgetMap[p.marca] = (budgetMap[p.marca] || 0) + pptoVal;
+            }
+          });
+        }
+        setPresupuestoByMarca(budgetMap);
+
+        const { data: skusData } = await supabase.from('solicitud_skus')
+          .select(`
+            marca, 
+            monto_aprobado, 
+            monto_descuento,
+            solicitud:solicitudes(id, vendedor_id, estado)
+          `);
+
+        const gastoMap = {};
+        if (skusData && skusData.length > 0) {
+          skusData.forEach(sku => {
+            const s = sku.solicitud;
+            if (!s || s.estado === 'rechazada' || s.estado === 'cancelada') return;
+
+            let inScope = false;
+            if (user.role === 'vendedor') {
+              inScope = s.vendedor_id === user.id;
+            } else if (user.role === 'supervisor') {
+              const vendProfile = profilesMap[s.vendedor_id];
+              inScope = (vendProfile?.supervisor_id === user.id || s.vendedor_id === user.id);
+            } else {
+              inScope = true;
+            }
+
+            if (inScope && sku.marca) {
+              const val = sku.monto_aprobado || sku.monto_descuento || 0;
+              gastoMap[sku.marca] = (gastoMap[sku.marca] || 0) + val;
+            }
+          });
+        }
+        setGastoByMarca(gastoMap);
+      } catch(err) {
+        console.error("Error fetching ppto/gasto", err);
+      }
+    };
+    
+    fetchPresupuestoYGasto();
+  }, [user]);
 
   // Debounced search for products (Smart Webhook + Fuzzy Filter + Fallback)
   useEffect(() => {
@@ -737,15 +828,40 @@ const NuevaSolicitud = () => {
               <button type="button" className="btn btn-danger btn-sm" onClick={() => removeSkuRow(s.id)} disabled={submitting}>✕</button>
             </div>
 
-            {/* Reglas de Aprobación */}
-            {user?.role !== 'vendedor' && reglasDict[s.marca] && (
-              <div style={{ marginBottom: '15px', padding: '8px 12px', backgroundColor: '#f8f9fa', borderRadius: '4px', borderLeft: '4px solid #1a5276', fontSize: '13px' }}>
-                <span style={{ color: '#28a745' }}>• Vendedor hasta {reglasDict[s.marca].limite_vendedor}%</span> <span style={{ color: '#ccc' }}>|</span>{' '}
-                <span style={{ color: '#ffc107' }}>• Supervisor hasta {reglasDict[s.marca].limite_supervisor}%</span> <span style={{ color: '#ccc' }}>|</span>{' '}
-                <span style={{ color: '#dc3545' }}>• Compras ≥ {reglasDict[s.marca].limite_compras}%</span>
-                <div style={{ marginTop: '4px', color: '#666', fontSize: '11px' }}>
-                  {new Date().toLocaleString('es-ES', { month: 'short', year: 'numeric' }).replace('.', '').toUpperCase()} — {s.marca} <br/>
+            {/* Reglas de Aprobación y Presupuesto */}
+            {reglasDict[s.marca] && (
+              <div style={{ marginBottom: '15px', padding: '12px', backgroundColor: '#f8f9fa', borderRadius: '4px', borderLeft: '4px solid #1a5276', fontSize: '13px' }}>
+                
+                {user?.role !== 'vendedor' && (
+                  <div style={{ marginBottom: '8px', paddingBottom: '8px', borderBottom: '1px solid #e2e8f0' }}>
+                    <span style={{ color: '#28a745', fontWeight: 600 }}>• Vendedor hasta {reglasDict[s.marca].limite_vendedor}%</span> <span style={{ color: '#ccc' }}>|</span>{' '}
+                    <span style={{ color: '#ffc107', fontWeight: 600 }}>• Supervisor hasta {reglasDict[s.marca].limite_supervisor}%</span> <span style={{ color: '#ccc' }}>|</span>{' '}
+                    <span style={{ color: '#dc3545', fontWeight: 600 }}>• Compras ≥ {reglasDict[s.marca].limite_compras}%</span>
+                  </div>
+                )}
+
+                <div style={{ display: 'flex', gap: '20px', flexWrap: 'wrap', alignItems: 'center' }}>
+                  <div style={{ display: 'flex', flexDirection: 'column' }}>
+                    <span style={{ fontSize: '11px', color: '#64748b', textTransform: 'uppercase' }}>Presupuesto {s.marca}</span>
+                    <strong style={{ fontSize: '14px', color: '#1e293b' }}>{formatCRC(presupuestoByMarca[s.marca] || 0)}</strong>
+                  </div>
+                  <div style={{ display: 'flex', flexDirection: 'column' }}>
+                    <span style={{ fontSize: '11px', color: '#64748b', textTransform: 'uppercase' }}>Gasto Acumulado</span>
+                    <strong style={{ fontSize: '14px', color: '#e74c3c' }}>{formatCRC(gastoByMarca[s.marca] || 0)}</strong>
+                  </div>
+                  <div style={{ display: 'flex', flexDirection: 'column' }}>
+                    <span style={{ fontSize: '11px', color: '#64748b', textTransform: 'uppercase' }}>Consumo</span>
+                    <strong style={{ fontSize: '14px', color: (presupuestoByMarca[s.marca] > 0 && (gastoByMarca[s.marca] || 0) / presupuestoByMarca[s.marca] > 0.9) ? '#dc3545' : '#28a745' }}>
+                      {presupuestoByMarca[s.marca] > 0 ? (((gastoByMarca[s.marca] || 0) / presupuestoByMarca[s.marca]) * 100).toFixed(1) + '%' : '0.0%'}
+                    </strong>
+                  </div>
+                  <div style={{ display: 'flex', flexDirection: 'column' }}>
+                     <span style={{ fontSize: '11px', color: '#64748b', textTransform: 'uppercase' }}>Fecha Base</span>
+                     <strong style={{ fontSize: '14px', color: '#1e293b' }}>{new Date().toLocaleString('es-ES', { month: 'short', year: 'numeric' }).replace('.', '').toUpperCase()}</strong>
+                  </div>
                 </div>
+                </div>
+
               </div>
             )}
 

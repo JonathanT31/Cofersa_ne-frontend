@@ -10,6 +10,9 @@ echo ===================================================
 echo Levantando API (Python)...
 start "Cofersa API - Backend" cmd /k "cd /d "%~dp0cofersa-api" && .venv\Scripts\python.exe main.py"
 
+:: Agregar Node a PATH temporalmente
+set PATH=C:\Program Files\nodejs;%PATH%
+
 :: 2. Iniciar el Frontend (cofersa-frontend con npm)
 echo Levantando Frontend (Node/React)...
 start "Cofersa Frontend" cmd /k "cd /d "%~dp0cofersa-frontend" && npm run dev"
