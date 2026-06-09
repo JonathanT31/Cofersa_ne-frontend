@@ -146,21 +146,8 @@ const NuevaSolicitud = () => {
               matchName(p.asesor, user.email)
             );
 
-            const matchSupervisor = p.supervisor && user && (
-              matchName(p.supervisor, user.username) || 
-              matchName(p.supervisor, user.nombre) || 
-              matchName(p.supervisor, user.email)
-            );
-
-            if (user.role === 'vendedor') {
-              if (matchAsesor) {
-                budgetMap[p.marca] = (budgetMap[p.marca] || 0) + pptoVal;
-              }
-            } else if (user.role === 'supervisor') {
-              if (matchSupervisor) {
-                budgetMap[p.marca] = (budgetMap[p.marca] || 0) + pptoVal;
-              }
-            } else {
+            // Siempre mostrar solo el presupuesto del usuario logueado como asesor
+            if (matchAsesor) {
               budgetMap[p.marca] = (budgetMap[p.marca] || 0) + pptoVal;
             }
           });
@@ -181,17 +168,8 @@ const NuevaSolicitud = () => {
             const s = sku.solicitud;
             if (!s || s.estado === 'rechazada' || s.estado === 'cancelada') return;
 
-            let inScope = false;
-            if (user.role === 'vendedor') {
-              inScope = s.vendedor_id === user.id;
-            } else if (user.role === 'supervisor') {
-              const vendProfile = profilesMap[s.vendedor_id];
-              inScope = (vendProfile?.supervisor_id === user.id || s.vendedor_id === user.id);
-            } else {
-              inScope = true;
-            }
-
-            if (inScope && sku.marca) {
+            // Siempre mostrar solo el gasto de las solicitudes creadas por el usuario logueado
+            if (s.vendedor_id === user.id && sku.marca) {
               const val = sku.monto_aprobado || sku.monto_descuento || 0;
               gastoMap[sku.marca] = (gastoMap[sku.marca] || 0) + val;
             }
@@ -859,7 +837,6 @@ const NuevaSolicitud = () => {
                      <span style={{ fontSize: '11px', color: '#64748b', textTransform: 'uppercase' }}>Fecha Base</span>
                      <strong style={{ fontSize: '14px', color: '#1e293b' }}>{new Date().toLocaleString('es-ES', { month: 'short', year: 'numeric' }).replace('.', '').toUpperCase()}</strong>
                   </div>
-                </div>
                 </div>
 
               </div>
