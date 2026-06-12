@@ -293,7 +293,8 @@ async def aprobar_solicitud(sol_id: int, user_id: str, comentario: str = Body(No
 
         send_n8n_webhook("aprobada", sol_upd, skus_upd, {
             "vendedor": vendedor_info,
-            "aprobador": aprobador_info
+            "aprobador": aprobador_info,
+            "email_destinatario": vendedor_info.get("email")
         })
     except Exception as e:
         print(f"Error triggering approval webhook in legacy endpoint: {e}")
@@ -310,6 +311,23 @@ async def rechazar_solicitud(sol_id: int, user_id: str, comentario: str = Body(.
     
     user_res = supabase.table("profiles").select("full_name").eq("id", user_id).single().execute()
     await log_audit(user_id, user_res.data.get("full_name", "Aprobador"), "rechazar_solicitud", "solicitud", sol_id, comentario)
+
+    # Send n8n webhook on rejection
+    try:
+        sol_upd = supabase.table("solicitudes").select("*").eq("id", sol_id).single().execute().data
+        skus_upd = supabase.table("solicitud_skus").select("*").eq("solicitud_id", sol_id).execute().data
+        vendedor_res = supabase.table("profiles").select("*").eq("id", sol_upd["vendedor_id"]).single().execute()
+        vendedor_info = vendedor_res.data if vendedor_res.data else {}
+        aprobador_info = supabase.table("profiles").select("*").eq("id", user_id).single().execute().data
+
+        send_n8n_webhook("rechazada", sol_upd, skus_upd, {
+            "vendedor": vendedor_info,
+            "aprobador": aprobador_info,
+            "email_destinatario": vendedor_info.get("email")
+        })
+    except Exception as e:
+        print(f"Error triggering rejection webhook in legacy endpoint: {e}")
+
     return {"status": "success"}
 
 @app.post("/api/solicitudes/procesar")
@@ -487,18 +505,29 @@ async def procesar_solicitud(data: Dict[str, Any]):
         }).eq("id", sol_id).execute()
         await log_audit(user_id, user.get("full_name") or user.get("username", "Aprobador"), "solicitud_rechazada", "solicitud", sol_id, "Todos los SKUs rechazados")
         
-        # Send rejection email
+        # Send rejection email via n8n webhook and fallback
         sol_upd = supabase.table("solicitudes").select("*").eq("id", sol_id).single().execute().data
         skus_upd = supabase.table("solicitud_skus").select("*").eq("solicitud_id", sol_id).execute().data
         vendedor_res = supabase.table("profiles").select("*").eq("id", sol["vendedor_id"]).single().execute()
         vendedor_info = vendedor_res.data if vendedor_res.data else {}
         
-        subj, html_body = build_solicitud_email(sol_upd, skus_upd, BASE_URL, vendedor_info, user)
-        recipients = []
-        if vendedor_info.get("email"): recipients.append(vendedor_info["email"])
-        if user.get("email"): recipients.append(user["email"])
-        if recipients:
-            send_email(SMTP_CONFIG, recipients, subj, html_body)
+        # Trigger n8n webhook
+        send_n8n_webhook("rechazada", sol_upd, skus_upd, {
+            "vendedor": vendedor_info,
+            "aprobador": user,
+            "email_destinatario": vendedor_info.get("email")
+        })
+
+        # Fallback email
+        try:
+            subj, html_body = build_solicitud_email(sol_upd, skus_upd, BASE_URL, vendedor_info, user)
+            recipients = []
+            if vendedor_info.get("email"): recipients.append(vendedor_info["email"])
+            if user.get("email"): recipients.append(user["email"])
+            if recipients:
+                send_email(SMTP_CONFIG, recipients, subj, html_body)
+        except Exception as mail_err:
+            print(f"Fallback email failed: {mail_err}")
 
         return {"status": "rejected", "message": "Solicitud rechazada en su totalidad"}
 
@@ -536,7 +565,8 @@ async def procesar_solicitud(data: Dict[str, Any]):
 
     send_n8n_webhook("aprobada", sol_upd, skus_upd, {
         "vendedor": vendedor_info,
-        "aprobador": user
+        "aprobador": user,
+        "email_destinatario": vendedor_info.get("email")
     })
 
     return {"status": "success", "message": "Solicitud aprobada con éxito", "folio": folio}

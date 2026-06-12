@@ -40,7 +40,7 @@ export const infocomprasService = {
     }
   },
 
-  async bulkSearch(codes, clientCode, clientName, listaPrecios) {
+  async bulkSearch(codes, clientCode, clientName, listaPrecios, accion) {
     if (!N8N_WEBHOOK_URL) {
       console.warn('VITE_N8N_WEBHOOK_URL is not defined in .env');
       return [];
