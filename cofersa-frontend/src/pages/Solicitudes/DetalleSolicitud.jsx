@@ -64,6 +64,7 @@ const DetalleSolicitud = () => {
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [comentario, setComentario] = useState('');
+  const [listaPrecios, setListaPrecios] = useState('');
   
   const [profilesMap, setProfilesMap] = useState({});
   const [brandInfo, setBrandInfo] = useState({});
@@ -99,6 +100,21 @@ const DetalleSolicitud = () => {
       
       if (sError) throw sError;
       setSol(sData);
+
+      // Fetch client list price
+      if (sData.cliente_codigo) {
+        supabase
+          .from('clientes')
+          .select('lista_precios')
+          .eq('cod_cliente', sData.cliente_codigo)
+          .maybeSingle()
+          .then(({ data: cData }) => {
+            if (cData) {
+              setListaPrecios(cData.lista_precios);
+            }
+          })
+          .catch(err => console.error('Error fetching list price:', err));
+      }
 
       // Fetch skus
       const { data: skData, error: skError } = await supabase
@@ -353,8 +369,9 @@ const DetalleSolicitud = () => {
       </div>
 
       <div className="card">
-        <div className="grid-3">
+        <div className="grid-4">
           <div><strong>Cliente:</strong> {sol.cliente_codigo} — {sol.cliente_nombre}</div>
+          <div><strong>Lista de Precios:</strong> {listaPrecios || 'N/A'}</div>
           <div><strong>Pedido:</strong> {sol.numero_pedido || 'N/A'}</div>
           <div><strong>Vendedor:</strong> {sol.vendedor ? `${sol.vendedor.nombre} ${sol.vendedor.apellido}` : 'Unknown'}</div>
         </div>

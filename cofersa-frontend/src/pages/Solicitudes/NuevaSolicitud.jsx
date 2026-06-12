@@ -1,9 +1,10 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import Layout from '../../components/layout/Layout';
 import { infocomprasService } from '../../api/infocomprasService';
 import { useAuth } from '../../context/AuthContext';
 import { supabase } from '../../api/supabaseClient';
+import { fuzzySearch, highlightText, MOCK_PRODUCTS } from '../../utils/searchMatcher.jsx';
 
 const formatCRC = (n) => {
   if (isNaN(n)) return "₡0.00";
@@ -62,12 +63,41 @@ const NuevaSolicitud = () => {
   const [infocSearch, setInfocSearch] = useState('');
   const [bulkCodes, setBulkCodes] = useState('');
   
+  const [presupuestoByMarca, setPresupuestoByMarca] = useState({});
+  const [gastoByMarca, setGastoByMarca] = useState({});
+  
   const [marcas, setMarcas] = useState([]);
   const [reglasDict, setReglasDict] = useState({});
   const [searchResults, setSearchResults] = useState([]);
   const [loadingProducts, setLoadingProducts] = useState(false);
   const [formErrors, setFormErrors] = useState([]);
   const [submitting, setSubmitting] = useState(false);
+  const [focusedIndex, setFocusedIndex] = useState(-1);
+  const searchInputRef = useRef(null);
+
+  // Brand Badge Style Helper
+  const getBrandBadgeStyle = (brand) => {
+    const b = (brand || '').toUpperCase();
+    let bg = '#f1f5f9', text = '#475569', border = '#e2e8f0';
+    if (b.includes('3M')) { bg = '#fee2e2'; text = '#ef4444'; border = '#fca5a5'; }
+    else if (b.includes('BOSCH')) { bg = '#e0f2fe'; text = '#0284c7'; border = '#bae6fd'; }
+    else if (b.includes('WD') || b.includes('40')) { bg = '#fef3c7'; text = '#d97706'; border = '#fde68a'; }
+    else if (b.includes('STAN') || b.includes('STA')) { bg = '#fffbeb'; text = '#b45309'; border = '#fef3c7'; }
+    else if (b.includes('AMA')) { bg = '#ccfbf1'; text = '#0d9488'; border = '#99f6e4'; }
+    else if (b.includes('URR')) { bg = '#f3e8ff'; text = '#7c3aed'; border = '#e9d5ff'; }
+    else if (b.includes('SUR')) { bg = '#dcfce7'; text = '#15803d'; border = '#bbf7d0'; }
+    return {
+      backgroundColor: bg,
+      color: text,
+      border: `1px solid ${border}`,
+      padding: '2px 8px',
+      borderRadius: '12px',
+      fontSize: '11px',
+      fontWeight: '600',
+      textTransform: 'uppercase',
+      display: 'inline-block'
+    };
+  };
 
   useEffect(() => {
     // Fetch available brands from rules
@@ -88,7 +118,73 @@ const NuevaSolicitud = () => {
     fetchMarcas();
   }, []);
 
-  // Debounced search for products (n8n Webhook)
+  useEffect(() => {
+    const fetchPresupuestoYGasto = async () => {
+      if (!user) return;
+      
+      try {
+        const { data: profilesData } = await supabase.from('profiles').select('*');
+        const profilesMap = {};
+        if (profilesData) {
+          profilesData.forEach(p => profilesMap[p.id] = p);
+        }
+
+        const { data: pptoData } = await supabase.from('presupuesto').select('*');
+        const budgetMap = {};
+        if (pptoData) {
+          pptoData.forEach(p => {
+            const pptoVal = p.ppto_mensual_crc || p.ppto_mensual || 0;
+            
+            const matchName = (field, targetStr) => {
+              if (!field || !targetStr) return false;
+              return field.trim().toLowerCase() === targetStr.trim().toLowerCase();
+            };
+
+            const matchAsesor = p.asesor && user && (
+              matchName(p.asesor, user.username) || 
+              matchName(p.asesor, user.nombre) || 
+              matchName(p.asesor, user.email)
+            );
+
+            // Siempre mostrar solo el presupuesto del usuario logueado como asesor
+            if (matchAsesor) {
+              budgetMap[p.marca] = (budgetMap[p.marca] || 0) + pptoVal;
+            }
+          });
+        }
+        setPresupuestoByMarca(budgetMap);
+
+        const { data: skusData } = await supabase.from('solicitud_skus')
+          .select(`
+            marca, 
+            monto_aprobado, 
+            monto_descuento,
+            solicitud:solicitudes(id, vendedor_id, estado)
+          `);
+
+        const gastoMap = {};
+        if (skusData && skusData.length > 0) {
+          skusData.forEach(sku => {
+            const s = sku.solicitud;
+            if (!s || s.estado === 'rechazada' || s.estado === 'cancelada') return;
+
+            // Siempre mostrar solo el gasto de las solicitudes creadas por el usuario logueado
+            if (s.vendedor_id === user.id && sku.marca) {
+              const val = sku.monto_aprobado || sku.monto_descuento || 0;
+              gastoMap[sku.marca] = (gastoMap[sku.marca] || 0) + val;
+            }
+          });
+        }
+        setGastoByMarca(gastoMap);
+      } catch(err) {
+        console.error("Error fetching ppto/gasto", err);
+      }
+    };
+    
+    fetchPresupuestoYGasto();
+  }, [user]);
+
+  // Debounced search for products (Smart Webhook + Fuzzy Filter + Fallback)
   useEffect(() => {
     if (!infocSearch.trim()) {
       setSearchResults([]);
@@ -102,17 +198,54 @@ const NuevaSolicitud = () => {
     const delayDebounceFn = setTimeout(async () => {
       setLoadingProducts(true);
       try {
-        const results = await infocomprasService.search(infocSearch, clienteCodigo, clienteNombre, listaPrecios);
-        setSearchResults(results);
+        let results = [];
+        // Extract the primary query token. We prioritize non-brand tokens, and numeric/specific tokens to prevent query truncation.
+        const tokens = infocSearch.trim().split(/\s+/).filter(Boolean);
+        const nonBrandTokens = tokens.filter(t => {
+          const upperT = t.toUpperCase();
+          return !marcas.some(m => m.toUpperCase() === upperT || m.toUpperCase().includes(upperT));
+        });
+        
+        const candidates = nonBrandTokens.length > 0 ? nonBrandTokens : tokens;
+        let primaryToken = "";
+        
+        // Prioritize numeric tokens, otherwise the longest token
+        const numericToken = candidates.find(t => /^\d+$/.test(t));
+        if (numericToken) {
+          primaryToken = numericToken;
+        } else {
+          primaryToken = candidates.reduce((max, t) => t.length > max.length ? t : max, "");
+        }
+        
+        if (primaryToken) {
+          results = await infocomprasService.search(primaryToken, clienteCodigo, clienteNombre, listaPrecios);
+        }
+        
+        // Filter and score the candidates locally using our fuzzy out-of-order search
+        let filtered = fuzzySearch(results, infocSearch);
+        
+        // Fallback to local catalog if no matches or if service returns empty
+        if (filtered.length === 0) {
+          filtered = fuzzySearch(MOCK_PRODUCTS, infocSearch);
+        }
+        
+        setSearchResults(filtered);
       } catch (err) {
-        console.error('Error fetching products from webhook:', err);
+        console.warn('Webhook search failed; falling back to local catalog search:', err);
+        const filtered = fuzzySearch(MOCK_PRODUCTS, infocSearch);
+        setSearchResults(filtered);
       } finally {
         setLoadingProducts(false);
       }
-    }, 400);
+    }, 300);
 
     return () => clearTimeout(delayDebounceFn);
   }, [infocSearch, clienteCodigo, clienteNombre, listaPrecios]);
+
+  // Reset focus index when results change
+  useEffect(() => {
+    setFocusedIndex(-1);
+  }, [searchResults, infocSearch]);
 
   // Handle clicking outside to close client dropdowns
   useEffect(() => {
@@ -395,7 +528,7 @@ const NuevaSolicitud = () => {
 
       <div className="card" style={{ marginBottom: '14px' }}>
         <div className="card-header">👤 Datos del Cliente</div>
-        <div className="grid-3">
+        <div className="grid-4">
           <div className="form-group client-autocomplete-container" style={{ position: 'relative' }}>
             <label>Código de Cliente *</label>
             <input 
@@ -485,6 +618,17 @@ const NuevaSolicitud = () => {
             )}
           </div>
           <div className="form-group">
+            <label>Lista de Precios</label>
+            <input 
+              type="text" 
+              className="form-control" 
+              value={listaPrecios} 
+              onChange={e => setListaPrecios(e.target.value)} 
+              placeholder="LPV1" 
+              disabled={submitting} 
+            />
+          </div>
+          <div className="form-group">
             <label>Número de Pedido</label>
             <input type="text" className="form-control" value={numeroPedido} onChange={e => setNumeroPedido(e.target.value)} placeholder="Opcional" disabled={submitting} />
           </div>
@@ -524,34 +668,134 @@ const NuevaSolicitud = () => {
         {searchMode === 'single' ? (
           <div>
             <div style={{ position: 'relative' }}>
-              <input 
-                type="text" 
-                className="form-control" 
-                placeholder={clienteCodigo.trim() && clienteNombre.trim() ? "Buscar por artículo, descripción, marca..." : "⚠️ Debe seleccionar un cliente antes de buscar..."} 
-                value={infocSearch}
-                onChange={e => setInfocSearch(e.target.value)}
-                disabled={!clienteCodigo.trim() || !clienteNombre.trim() || submitting}
-              />
-              {infocSearch && (loadingProducts || searchResults.length > 0 || (infocSearch.trim().length >= 3 && !loadingProducts)) && (
-                <div style={{ position: 'absolute', top: '100%', left: 0, right: 0, background: '#fff', border: '1px solid #ccc', zIndex: 10, maxHeight: '200px', overflowY: 'auto', boxShadow: '0 4px 6px rgba(0,0,0,0.1)' }}>
+              <div style={{ display: 'flex', alignItems: 'center', position: 'relative' }}>
+                <input 
+                  ref={searchInputRef}
+                  type="text" 
+                  className="form-control" 
+                  style={{ paddingRight: infocSearch ? '36px' : '12px' }}
+                  placeholder={clienteCodigo.trim() && clienteNombre.trim() ? "Buscar por artículo, descripción, marca... (out-of-order & fuzzy)" : "⚠️ Debe seleccionar un cliente antes de buscar..."} 
+                  value={infocSearch}
+                  onChange={e => setInfocSearch(e.target.value)}
+                  onKeyDown={e => {
+                    if (searchResults.length === 0) return;
+                    if (e.key === 'ArrowDown') {
+                      e.preventDefault();
+                      setFocusedIndex(prev => (prev + 1) % searchResults.length);
+                    } else if (e.key === 'ArrowUp') {
+                      e.preventDefault();
+                      setFocusedIndex(prev => (prev - 1 + searchResults.length) % searchResults.length);
+                    } else if (e.key === 'Enter') {
+                      e.preventDefault();
+                      if (focusedIndex >= 0 && focusedIndex < searchResults.length) {
+                        handleAddFromInfocompras(searchResults[focusedIndex]);
+                        setFocusedIndex(-1);
+                      }
+                    } else if (e.key === 'Escape') {
+                      setSearchResults([]);
+                      setFocusedIndex(-1);
+                    }
+                  }}
+                  disabled={!clienteCodigo.trim() || !clienteNombre.trim() || submitting}
+                  autoComplete="off"
+                />
+                {infocSearch && (
+                  <button 
+                    type="button"
+                    onClick={() => { setInfocSearch(''); setSearchResults([]); setFocusedIndex(-1); searchInputRef.current?.focus(); }}
+                    style={{
+                      position: 'absolute',
+                      right: '12px',
+                      background: 'transparent',
+                      border: 'none',
+                      color: '#94a3b8',
+                      cursor: 'pointer',
+                      fontSize: '14px',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      padding: '4px',
+                      borderRadius: '50%'
+                    }}
+                    title="Limpiar búsqueda"
+                  >
+                    ✕
+                  </button>
+                )}
+              </div>
+              {infocSearch && (loadingProducts || searchResults.length > 0 || (infocSearch.trim().length >= 2 && !loadingProducts)) && (
+                <div style={{
+                  position: 'absolute',
+                  top: '100%',
+                  left: 0,
+                  right: 0,
+                  background: 'rgba(255, 255, 255, 0.98)',
+                  backdropFilter: 'blur(12px)',
+                  border: '1px solid rgba(26, 82, 118, 0.2)',
+                  borderRadius: '8px',
+                  zIndex: 100,
+                  maxHeight: '260px',
+                  overflowY: 'auto',
+                  boxShadow: '0 10px 25px -5px rgba(0, 0, 0, 0.1), 0 8px 10px -6px rgba(0, 0, 0, 0.1)',
+                  marginTop: '6px'
+                }}>
+                  {/* Dropdown Header Info */}
+                  <div style={{ padding: '6px 12px', fontSize: '11px', color: '#64748b', borderBottom: '1px solid #f1f5f9', display: 'flex', justifyContent: 'space-between', backgroundColor: '#f8fafc' }}>
+                    <span>💡 Búsqueda Inteligente</span>
+                    <span>{searchResults.length} {searchResults.length === 1 ? 'coincidencia' : 'coincidencias'}</span>
+                  </div>
+                  
                   {loadingProducts ? (
-                    <div style={{ padding: '12px', color: '#64748b', textAlign: 'center', fontSize: '13px' }}>
-                      🔍 Buscando productos...
+                    <div style={{ padding: '16px', color: '#64748b', textAlign: 'center', fontSize: '13px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
+                      <span className="animate-spin">⏳</span> Buscando productos...
                     </div>
                   ) : searchResults.length > 0 ? (
-                    searchResults.map(p => (
-                      <div 
-                        key={p.ARTICULO1} 
-                        style={{ padding: '8px 12px', cursor: 'pointer', borderBottom: '1px solid #eee', fontSize: '13px' }}
-                        onClick={() => handleAddFromInfocompras(p)}
-                      >
-                        <strong style={{ color: '#1a5276' }}>{p.ARTICULO1}</strong> - {p.DESCRIPCION} <span style={{ color: '#888' }}>({p.MARCA})</span>
-                        <div style={{ fontSize: '11px', color: '#555' }}>Precio: {formatCRC(p.PRECIO)}</div>
-                      </div>
-                    ))
+                    searchResults.map((p, index) => {
+                      const isFocused = index === focusedIndex;
+                      return (
+                        <div 
+                          key={p.ARTICULO1} 
+                          style={{
+                            padding: '10px 14px',
+                            cursor: 'pointer',
+                            borderBottom: '1px solid #f1f5f9',
+                            fontSize: '13px',
+                            backgroundColor: isFocused ? '#f1f5f9' : 'transparent',
+                            color: isFocused ? '#0f172a' : '#334155',
+                            transition: 'all 0.15s ease',
+                            display: 'flex',
+                            justifyContent: 'space-between',
+                            alignItems: 'center'
+                          }}
+                          onClick={() => handleAddFromInfocompras(p)}
+                          onMouseEnter={() => setFocusedIndex(index)}
+                        >
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', textAlign: 'left' }}>
+                            <div>
+                              <strong style={{ color: '#1a5276', fontFamily: 'monospace' }}>{highlightText(p.ARTICULO1, infocSearch)}</strong>
+                              <span style={{ margin: '0 6px', color: '#cbd5e1' }}>|</span>
+                              <span>{highlightText(p.DESCRIPCION, infocSearch)}</span>
+                            </div>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '4px' }}>
+                              <span style={getBrandBadgeStyle(p.MARCA)}>
+                                {highlightText(p.MARCA, infocSearch)}
+                              </span>
+                              {p.BDF === 'S' && (
+                                <span style={{ backgroundColor: '#ffedd5', color: '#ea580c', fontSize: '10px', padding: '1px 6px', borderRadius: '4px', fontWeight: 'bold' }}>
+                                  BDF
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                          <div style={{ textAlign: 'right', fontWeight: 'bold', color: '#0f172a', paddingLeft: '12px' }}>
+                            {formatCRC(p.PRECIO)}
+                          </div>
+                        </div>
+                      );
+                    })
                   ) : (
-                    <div style={{ padding: '12px', color: '#64748b', textAlign: 'center', fontSize: '13px' }}>
-                      No se encontraron productos.
+                    <div style={{ padding: '16px', color: '#64748b', textAlign: 'center', fontSize: '13px' }}>
+                      No se encontraron productos coincidentes. Intente con otros términos.
                     </div>
                   )}
                 </div>
@@ -586,15 +830,39 @@ const NuevaSolicitud = () => {
               <button type="button" className="btn btn-danger btn-sm" onClick={() => removeSkuRow(s.id)} disabled={submitting}>✕</button>
             </div>
 
-            {/* Reglas de Aprobación */}
+            {/* Reglas de Aprobación y Presupuesto */}
             {reglasDict[s.marca] && (
-              <div style={{ marginBottom: '15px', padding: '8px 12px', backgroundColor: '#f8f9fa', borderRadius: '4px', borderLeft: '4px solid #1a5276', fontSize: '13px' }}>
-                <span style={{ color: '#28a745' }}>• Vendedor hasta {reglasDict[s.marca].limite_vendedor}%</span> <span style={{ color: '#ccc' }}>|</span>{' '}
-                <span style={{ color: '#ffc107' }}>• Supervisor hasta {reglasDict[s.marca].limite_supervisor}%</span> <span style={{ color: '#ccc' }}>|</span>{' '}
-                <span style={{ color: '#dc3545' }}>• Compras ≥ {reglasDict[s.marca].limite_compras}%</span>
-                <div style={{ marginTop: '4px', color: '#666', fontSize: '11px' }}>
-                  {new Date().toLocaleString('es-ES', { month: 'short', year: 'numeric' }).replace('.', '').toUpperCase()} — {s.marca} <br/>
+              <div style={{ marginBottom: '15px', padding: '12px', backgroundColor: '#f8f9fa', borderRadius: '4px', borderLeft: '4px solid #1a5276', fontSize: '13px' }}>
+                
+                {user?.role !== 'vendedor' && (
+                  <div style={{ marginBottom: '8px', paddingBottom: '8px', borderBottom: '1px solid #e2e8f0' }}>
+                    <span style={{ color: '#28a745', fontWeight: 600 }}>• Vendedor hasta {reglasDict[s.marca].limite_vendedor}%</span> <span style={{ color: '#ccc' }}>|</span>{' '}
+                    <span style={{ color: '#ffc107', fontWeight: 600 }}>• Supervisor hasta {reglasDict[s.marca].limite_supervisor}%</span> <span style={{ color: '#ccc' }}>|</span>{' '}
+                    <span style={{ color: '#dc3545', fontWeight: 600 }}>• Compras ≥ {reglasDict[s.marca].limite_compras}%</span>
+                  </div>
+                )}
+
+                <div style={{ display: 'flex', gap: '20px', flexWrap: 'wrap', alignItems: 'center' }}>
+                  <div style={{ display: 'flex', flexDirection: 'column' }}>
+                    <span style={{ fontSize: '11px', color: '#64748b', textTransform: 'uppercase' }}>Presupuesto {s.marca}</span>
+                    <strong style={{ fontSize: '14px', color: '#1e293b' }}>{formatCRC(presupuestoByMarca[s.marca] || 0)}</strong>
+                  </div>
+                  <div style={{ display: 'flex', flexDirection: 'column' }}>
+                    <span style={{ fontSize: '11px', color: '#64748b', textTransform: 'uppercase' }}>Gasto Acumulado</span>
+                    <strong style={{ fontSize: '14px', color: '#e74c3c' }}>{formatCRC(gastoByMarca[s.marca] || 0)}</strong>
+                  </div>
+                  <div style={{ display: 'flex', flexDirection: 'column' }}>
+                    <span style={{ fontSize: '11px', color: '#64748b', textTransform: 'uppercase' }}>Consumo</span>
+                    <strong style={{ fontSize: '14px', color: (presupuestoByMarca[s.marca] > 0 && (gastoByMarca[s.marca] || 0) / presupuestoByMarca[s.marca] > 0.9) ? '#dc3545' : '#28a745' }}>
+                      {presupuestoByMarca[s.marca] > 0 ? (((gastoByMarca[s.marca] || 0) / presupuestoByMarca[s.marca]) * 100).toFixed(1) + '%' : '0.0%'}
+                    </strong>
+                  </div>
+                  <div style={{ display: 'flex', flexDirection: 'column' }}>
+                     <span style={{ fontSize: '11px', color: '#64748b', textTransform: 'uppercase' }}>Fecha Base</span>
+                     <strong style={{ fontSize: '14px', color: '#1e293b' }}>{new Date().toLocaleString('es-ES', { month: 'short', year: 'numeric' }).replace('.', '').toUpperCase()}</strong>
+                  </div>
                 </div>
+
               </div>
             )}
 

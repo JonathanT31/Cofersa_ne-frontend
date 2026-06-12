@@ -12,7 +12,7 @@ const formatCRC = (n) => {
 const EstadoBadge = ({ estado }) => {
   let className = 'badge ';
   let label = estado;
-  
+
   switch (estado) {
     case 'pendiente':
       className += 'badge-pending';
@@ -60,7 +60,7 @@ const MisSolicitudes = () => {
         .select('*')
         .eq('vendedor_id', user.id)
         .order('created_at', { ascending: false });
-      
+
       if (error) throw error;
       setSolicitudes(data || []);
     } catch (err) {
