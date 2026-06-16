@@ -176,7 +176,127 @@ async def crear_solicitud(data: Dict[str, Any]):
     reglas_res = supabase.table("reglas").select("*").execute()
     reglas = {r['marca']: r for r in reglas_res.data}
 
-    # 2. Ruteo de 3 niveles (Lógica oficial)
+    # 2. Validación de presupuesto antes de crear la solicitud
+    # Calcular monto total por marca
+    monto_por_marca = {}
+    for sku in skus:
+        marca = sku.get("marca")
+        monto_descuento = float(sku.get("monto_descuento") or 0)
+        if marca:
+            monto_por_marca[marca] = monto_por_marca.get(marca, 0) + monto_descuento
+    
+    # Obtener presupuesto del usuario para cada marca
+    presupuesto_res = supabase.table("presupuesto").select("*").execute()
+    presupuesto_usuario = {}
+    
+    for ppto in presupuesto_res.data:
+        asesor = ppto.get("asesor", "")
+        marca = ppto.get("marca")
+        ppto_val = ppto.get("ppto_mensual_crc") or ppto.get("ppto_mensual") or 0
+        
+        # Verificar si el asesor coincide con el usuario actual
+        match_name = False
+        if user and asesor:
+            asesor_lower = str(asesor).lower().strip()
+            user_fields = [
+                user.get("username", ""),
+                user.get("nombre", ""), 
+                user.get("full_name", ""),
+                user.get("email", ""),
+                f"{user.get('nombre', '')} {user.get('apellido', '')}".strip(),
+                user.get("display_name", "")
+            ]
+            # También buscar coincidencias parciales (por ejemplo, "Juan" vs "Juan Perez")
+            user_fields_lower = [str(f).lower().strip() for f in user_fields if f and str(f).strip()]
+            
+            for user_field in user_fields_lower:
+                if user_field and (asesor_lower == user_field or user_field.startswith(asesor_lower) or asesor_lower.startswith(user_field)):
+                    match_name = True
+                    break
+        
+        if match_name and marca:
+            presupuesto_usuario[marca] = presupuesto_usuario.get(marca, 0) + ppto_val
+    
+    # Obtener gasto actual del usuario para cada marca
+    # Obtener todas las solicitudes del usuario excepto rechazadas/canceladas
+    solicitudes_res = supabase.table("solicitudes") \
+        .select("id, estado") \
+        .eq("vendedor_id", vendedor_id) \
+        .not_.in_("estado", ['rechazada', 'cancelada']) \
+        .execute()
+    
+    gasto_por_marca = {}
+    if solicitudes_res.data:
+        for solicitud in solicitudes_res.data:
+            sol_id = solicitud["id"]
+            estado = solicitud["estado"]
+            
+            # Obtener SKUs de esta solicitud
+            skus_res = supabase.table("solicitud_skus") \
+                .select("marca, monto_aprobado, monto_descuento") \
+                .eq("solicitud_id", sol_id) \
+                .execute()
+            
+            for sku_data in skus_res.data:
+                marca = sku_data.get("marca")
+                if marca:
+                    # Para solicitudes aprobadas, usar monto_aprobado, para otras usar monto_descuento
+                    if estado == 'aprobada':
+                        monto = sku_data.get("monto_aprobado") or 0
+                    else:
+                        monto = sku_data.get("monto_descuento") or 0
+                    
+                    gasto_por_marca[marca] = gasto_por_marca.get(marca, 0) + float(monto)
+    
+    # Verificar que no se exceda el presupuesto
+    marcas_excedidas = []
+    marcas_sin_presupuesto = []
+    
+    for marca, monto_solicitud in monto_por_marca.items():
+        presupuesto_total = presupuesto_usuario.get(marca, 0)
+        gasto_actual = gasto_por_marca.get(marca, 0)
+        presupuesto_disponible = presupuesto_total - gasto_actual
+        
+        # Verificar si la marca tiene presupuesto asignado
+        if presupuesto_total <= 0:
+            marcas_sin_presupuesto.append({
+                "marca": marca,
+                "monto_solicitud": monto_solicitud,
+                "presupuesto_total": presupuesto_total,
+                "gasto_actual": gasto_actual
+            })
+        elif monto_solicitud > presupuesto_disponible:
+            marcas_excedidas.append({
+                "marca": marca,
+                "monto_solicitud": monto_solicitud,
+                "presupuesto_disponible": presupuesto_disponible,
+                "presupuesto_total": presupuesto_total,
+                "gasto_actual": gasto_actual
+            })
+    
+    # Primero verificar marcas sin presupuesto
+    if marcas_sin_presupuesto:
+        mensaje = "❌ No tiene presupuesto asignado para las siguientes marcas:\n"
+        for marca_info in marcas_sin_presupuesto:
+            mensaje += f"- **{marca_info['marca']}**: \n"
+            mensaje += f"  • Monto solicitado: ₡{marca_info['monto_solicitud']:.2f}\n"
+            mensaje += f"  • Presupuesto asignado: ₡{marca_info['presupuesto_total']:.2f}\n"
+            mensaje += f"  • Gasto actual: ₡{marca_info['gasto_actual']:.2f}\n"
+        mensaje += "\nPor favor, contacte a su supervisor para asignarle presupuesto para estas marcas."
+        raise HTTPException(status_code=400, detail=mensaje)
+    
+    if marcas_excedidas:
+        mensaje = "⚠️ La solicitud excede el presupuesto disponible para las siguientes marcas:\n"
+        for exceso in marcas_excedidas:
+            mensaje += f"- **{exceso['marca']}**: \n"
+            mensaje += f"  • Monto solicitado: ₡{exceso['monto_solicitud']:.2f}\n"
+            mensaje += f"  • Presupuesto disponible: ₡{exceso['presupuesto_disponible']:.2f}\n"
+            mensaje += f"  • Presupuesto total: ₡{exceso['presupuesto_total']:.2f}\n"
+            mensaje += f"  • Gasto actual: ₡{exceso['gasto_actual']:.2f}\n"
+        mensaje += "\nPor favor, ajuste los montos de descuento o contacte a su supervisor para solicitar un aumento de presupuesto."
+        raise HTTPException(status_code=400, detail=mensaje)
+
+    # 3. Ruteo de 3 niveles (Lógica oficial)
     aprobador_nivel = "vendedor"
     max_pcts = {}
     for sku in skus:
@@ -191,7 +311,7 @@ async def crear_solicitud(data: Dict[str, Any]):
             if pct > ls: aprobador_nivel = "compras"; break
             elif pct > lv: aprobador_nivel = "supervisor"
 
-    # 3. Estado y Aprobador
+    # 4. Estado y Aprobador
     estado = "pendiente"
     aprobador_id = user.get("supervisor_id") if aprobador_nivel == "supervisor" else None
     if aprobador_nivel == "vendedor": 
@@ -201,7 +321,7 @@ async def crear_solicitud(data: Dict[str, Any]):
     monto_total = sum(float(s.get("monto_descuento") or 0) for s in skus)
     sla = add_business_hours(datetime.now(), 48)
 
-    # 4. Insertar Cabecera
+    # 5. Insertar Cabecera
     sol_res = supabase.table("solicitudes").insert({
         "folio": folio,
         "cliente_codigo": data.get("cliente_codigo"),
@@ -221,7 +341,7 @@ async def crear_solicitud(data: Dict[str, Any]):
     # Auditoría
     await log_audit(vendedor_id, user.get("full_name", "Vendedor"), "crear_solicitud", "solicitud", solicitud["id"], f"Folio: {folio}")
 
-    # 5. Insertar SKUs
+    # 6. Insertar SKUs
     for sku in skus:
         pb, pd = float(sku.get("precio_base") or 0), float(sku.get("porcentaje_descuento_sol") or 0)
         supabase.table("solicitud_skus").insert({

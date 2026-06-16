@@ -8,7 +8,7 @@ echo ===================================================
 
 :: 1. Iniciar el Backend (cofersa-api con Python)
 echo Levantando API (Python)...
-start "Cofersa API - Backend" cmd /k "cd /d "%~dp0cofersa-api" && .venv\Scripts\python.exe main.py"
+start "Cofersa API - Backend" cmd /k "cd /d "%~dp0cofersa-api" && python main.py"
 
 :: Agregar Node a PATH temporalmente
 set PATH=C:\Program Files\nodejs;%PATH%

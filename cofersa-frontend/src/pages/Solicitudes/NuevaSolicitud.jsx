@@ -218,7 +218,7 @@ const NuevaSolicitud = () => {
         }
         
         if (primaryToken) {
-          results = await infocomprasService.search(primaryToken, clienteCodigo, clienteNombre, listaPrecios);
+          results = await infocomprasService.search(/*primaryToken*/infocSearch, clienteCodigo, clienteNombre, listaPrecios);
         }
         
         // Filter and score the candidates locally using our fuzzy out-of-order search
@@ -397,6 +397,25 @@ const NuevaSolicitud = () => {
     }));
   };
 
+  // Función para verificar si un SKU excede el presupuesto disponible
+  const checkPresupuestoExcedido = (sku) => {
+    if (!sku.marca) return false;
+    
+    const presupuestoTotal = presupuestoByMarca[sku.marca] || 0;
+    const gastoActual = gastoByMarca[sku.marca] || 0;
+    const presupuestoDisponible = presupuestoTotal - gastoActual;
+    
+    // Calcular el monto total de esta solicitud para la misma marca
+    const montoTotalSolicitud = skus
+      .filter(s => s.marca === sku.marca && s.id !== sku.id)
+      .reduce((total, s) => total + (parseFloat(s.mdesc) || 0), 0);
+    
+    const montoEsteSku = parseFloat(sku.mdesc) || 0;
+    const montoTotalMarca = montoTotalSolicitud + montoEsteSku;
+    
+    return montoTotalMarca > presupuestoDisponible;
+  };
+
   const enviarSolicitud = async () => {
     const errors = [];
     if (!clienteCodigo.trim()) errors.push('Código de cliente es requerido.');
@@ -404,12 +423,42 @@ const NuevaSolicitud = () => {
     if (!justificacion.trim()) errors.push('Justificación es requerida.');
     if (!skus.length) errors.push('Debe agregar al menos una línea de SKU.');
 
+    // Validación de presupuesto en frontend
+    const excedidosPresupuesto = [];
+    const montoPorMarca = {};
+    
+    // Calcular monto total por marca en la solicitud
     skus.forEach((s) => {
       if (!s.marca) errors.push(`Línea #${s.id}: Seleccione una marca.`);
       if (!s.codigo_sku.trim()) errors.push(`Línea #${s.id}: Código SKU requerido.`);
       if (parseFloat(s.cantidad) <= 0) errors.push(`Línea #${s.id}: Cantidad debe ser mayor a 0.`);
       if (parseFloat(s.precio_base) <= 0) errors.push(`Línea #${s.id}: Precio LPV debe ser mayor a 0.`);
+      
+      if (s.marca) {
+        const monto = parseFloat(s.mdesc) || 0;
+        montoPorMarca[s.marca] = (montoPorMarca[s.marca] || 0) + monto;
+      }
     });
+
+    // Verificar presupuesto para cada marca
+    Object.keys(montoPorMarca).forEach(marca => {
+      const presupuestoTotal = presupuestoByMarca[marca] || 0;
+      const gastoActual = gastoByMarca[marca] || 0;
+      const montoSolicitud = montoPorMarca[marca];
+      const disponible = presupuestoTotal - gastoActual;
+      
+      if (presupuestoTotal <= 0) {
+        excedidosPresupuesto.push(`**${marca}**: No tiene presupuesto asignado. Solicitud: ₡${montoSolicitud.toFixed(2)}`);
+      } else if (montoSolicitud > disponible) {
+        excedidosPresupuesto.push(`**${marca}**: Solicitud ₡${montoSolicitud.toFixed(2)} > Disponible ₡${disponible.toFixed(2)} (Total: ₡${presupuestoTotal.toFixed(2)}, Gasto: ₡${gastoActual.toFixed(2)})`);
+      }
+    });
+
+    if (excedidosPresupuesto.length > 0) {
+      errors.push('⚠️ **PRESUPUESTO INSUFICIENTE**');
+      errors.push(...excedidosPresupuesto);
+      errors.push('Por favor, ajuste los montos de descuento o contacte a su supervisor.');
+    }
 
     setFormErrors(errors);
 
@@ -674,7 +723,7 @@ const NuevaSolicitud = () => {
                   type="text" 
                   className="form-control" 
                   style={{ paddingRight: infocSearch ? '36px' : '12px' }}
-                  placeholder={clienteCodigo.trim() && clienteNombre.trim() ? "Buscar por artículo, descripción, marca... (out-of-order & fuzzy)" : "⚠️ Debe seleccionar un cliente antes de buscar..."} 
+                  placeholder={clienteCodigo.trim() && clienteNombre.trim() ? "Buscar por artículo, descripción, marca..." : "⚠️ Debe seleccionar un cliente antes de buscar..."} 
                   value={infocSearch}
                   onChange={e => setInfocSearch(e.target.value)}
                   onKeyDown={e => {
@@ -850,6 +899,12 @@ const NuevaSolicitud = () => {
                   <div style={{ display: 'flex', flexDirection: 'column' }}>
                     <span style={{ fontSize: '11px', color: '#64748b', textTransform: 'uppercase' }}>Gasto Acumulado</span>
                     <strong style={{ fontSize: '14px', color: '#e74c3c' }}>{formatCRC(gastoByMarca[s.marca] || 0)}</strong>
+                  </div>
+                  <div style={{ display: 'flex', flexDirection: 'column' }}>
+                    <span style={{ fontSize: '11px', color: '#64748b', textTransform: 'uppercase' }}>Disponible</span>
+                    <strong style={{ fontSize: '14px', color: (presupuestoByMarca[s.marca] > 0 && (presupuestoByMarca[s.marca] - (gastoByMarca[s.marca] || 0)) / presupuestoByMarca[s.marca] < 0.1) ? '#dc3545' : '#28a745' }}>
+                      {formatCRC((presupuestoByMarca[s.marca] || 0) - (gastoByMarca[s.marca] || 0))}
+                    </strong>
                   </div>
                   <div style={{ display: 'flex', flexDirection: 'column' }}>
                     <span style={{ fontSize: '11px', color: '#64748b', textTransform: 'uppercase' }}>Consumo</span>
