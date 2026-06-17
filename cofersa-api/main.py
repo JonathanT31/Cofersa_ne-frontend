@@ -1,6 +1,7 @@
 import os
 import json
 import urllib.request
+import re
 from datetime import datetime, timedelta
 from typing import List, Dict, Any, Optional
 
@@ -15,15 +16,55 @@ from utils.xlsx_reader import import_reglas_from_xlsx, import_presupuesto_from_x
 
 load_dotenv()
 
+def format_iso_datetime_string(val: str) -> str:
+    """Format an ISO datetime string (e.g. 2026-06-17T09:30:46.623837+00:00) into DD/MM/YYYY hh:mm:ss AM/PM."""
+    if not isinstance(val, str):
+        return val
+    # Pattern to match ISO datetime strings: YYYY-MM-DDTHH:MM:SS...
+    iso_pattern = r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:[+-]\d{2}:?\d{2}|Z)?$"
+    if re.match(iso_pattern, val):
+        try:
+            # Replace Z with +00:00 for python's fromisoformat
+            clean_val = val.replace("Z", "+00:00")
+            dt = datetime.fromisoformat(clean_val)
+            return dt.strftime("%d/%m/%Y %I:%M:%S %p")
+        except Exception:
+            try:
+                parts = val.split("T")
+                if len(parts) == 2:
+                    date_part = parts[0]
+                    time_part = parts[1].split(".")[0].split("+")[0].split("-")[0]
+                    year, month, day = date_part.split("-")
+                    return f"{day}/{month}/{year} {time_part}"
+            except Exception:
+                pass
+    return val
+
+def format_all_dates(obj: Any) -> Any:
+    """Recursively search and format any ISO datetimes found in dicts, lists, or strings."""
+    if isinstance(obj, dict):
+        return {k: format_all_dates(v) for k, v in obj.items()}
+    elif isinstance(obj, list):
+        return [format_all_dates(item) for item in obj]
+    elif isinstance(obj, str):
+        return format_iso_datetime_string(obj)
+    return obj
+
 def send_n8n_webhook(event_type: str, solicitud: Dict[str, Any], skus: List[Dict[str, Any]], extra_info: Dict[str, Any] = None) -> bool:
-    """Send payload to n8n webhook on request creation or approval."""
+    """Send payload to n8n webhook on request creation or approval with formatted dates."""
     url = os.getenv("N8N_EMAIL_WEBHOOK_URL", "https://sandboxn8n.mayoreo.biz/webhook-test/28efcada-13fd-4552-abe2-7aace29324b6")
+    
+    # Format all dates in payload to display nicely in emails/notifications
+    solicitud_formateada = format_all_dates(solicitud)
+    skus_formateados = format_all_dates(skus)
+    extra_info_formateada = format_all_dates(extra_info or {})
+    
     payload = {
-        "event": event_type,  # "creada" o "aprobada"
-        "solicitud": solicitud,
-        "skus": skus,
-        "extra_info": extra_info or {},
-        "timestamp": datetime.now().isoformat()
+        "event": event_type,  # "creada", "aprobada", o "rechazada"
+        "solicitud": solicitud_formateada,
+        "skus": skus_formateados,
+        "extra_info": extra_info_formateada,
+        "timestamp": datetime.now().strftime("%d/%m/%Y %I:%M:%S %p")
     }
     try:
         req = urllib.request.Request(
@@ -297,7 +338,19 @@ async def crear_solicitud(data: Dict[str, Any]):
 
     # Determinar si se envía webhook de creación o de aprobación
     if aprobador_nivel == "vendedor":
-        send_n8n_webhook("aprobada", solicitud, skus, {
+        # Recargar los SKUs desde Supabase para incluir campos aprobados (porcentaje_aprobado, precio_aprobado, etc.)
+        try:
+            skus_guardados = supabase.table("solicitud_skus").select("*").eq("solicitud_id", solicitud["id"]).execute().data or skus
+        except Exception:
+            skus_guardados = skus
+        
+        # También recargar la solicitud con campos actualizados
+        try:
+            solicitud_actualizada = supabase.table("solicitudes").select("*").eq("id", solicitud["id"]).single().execute().data or solicitud
+        except Exception:
+            solicitud_actualizada = solicitud
+
+        send_n8n_webhook("aprobada", solicitud_actualizada, skus_guardados, {
             "vendedor": user,
             "aprobador": user,
             "email_destinatario": user.get("email")
