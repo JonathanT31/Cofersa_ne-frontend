@@ -151,6 +151,16 @@ const NuevaSolicitud = () => {
     fetchBudget();
   }, [user?.id]);
 
+  // Auto-dismiss validation errors/alerts after 6 seconds
+  useEffect(() => {
+    if (formErrors.length > 0) {
+      const timer = setTimeout(() => {
+        setFormErrors([]);
+      }, 6000);
+      return () => clearTimeout(timer);
+    }
+  }, [formErrors]);
+
   // Debounced search for products (n8n Webhook)
   useEffect(() => {
     if (!infocSearch.trim()) {
