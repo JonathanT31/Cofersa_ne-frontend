@@ -156,7 +156,7 @@ const NuevaSolicitud = () => {
     if (formErrors.length > 0) {
       const timer = setTimeout(() => {
         setFormErrors([]);
-      }, 6000);
+      }, 5000);
       return () => clearTimeout(timer);
     }
   }, [formErrors]);
@@ -802,18 +802,18 @@ const NuevaSolicitud = () => {
             <div className="grid-3">
               <div className="form-group">
                 <label>Marca *</label>
-                <select className="form-control" value={s.marca} onChange={e => updateSku(s.id, 'marca', e.target.value)} disabled={submitting}>
+                <select className="form-control" value={s.marca} onChange={e => updateSku(s.id, 'marca', e.target.value)} disabled={true}>
                   <option value="">-- Seleccione --</option>
                   {marcas.map(m => <option key={m} value={m}>{m}</option>)}
                 </select>
               </div>
               <div className="form-group">
                 <label>Código SKU *</label>
-                <input type="text" className="form-control" value={s.codigo_sku} onChange={e => updateSku(s.id, 'codigo_sku', e.target.value)} disabled={submitting} />
+                <input type="text" className="form-control" readOnly value={s.codigo_sku} onChange={e => updateSku(s.id, 'codigo_sku', e.target.value)} disabled={submitting} />
               </div>
               <div className="form-group">
                 <label>Descripción *</label>
-                <input type="text" className="form-control" value={s.descripcion} onChange={e => updateSku(s.id, 'descripcion', e.target.value)} disabled={submitting} />
+                <input type="text" className="form-control" readOnly value={s.descripcion} onChange={e => updateSku(s.id, 'descripcion', e.target.value)} disabled={submitting} />
               </div>
               <div className="form-group">
                 <label>Cantidad *</label>
@@ -833,7 +833,7 @@ const NuevaSolicitud = () => {
                   type="number" 
                   className="form-control" 
                   style={{ background: '#f8f8f8' }} 
-                  value={s.mdesc === 0 || !s.mdesc ? '' : s.mdesc} 
+                  value={s.mdesc === 0 || !s.mdesc ? '' : Number.parseFloat(s.mdesc).toFixed(2)} 
                   onChange={e => updateSku(s.id, 'mdesc', e.target.value)} 
                   min="0" 
                   step="0.01" 
