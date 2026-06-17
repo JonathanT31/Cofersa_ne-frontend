@@ -227,7 +227,7 @@ async def crear_solicitud(data: Dict[str, Any]):
     for sku in skus:
         m = sku.get("marca")
         mdesc = float(sku.get("monto_descuento") or 0)
-        nuevos_gastos[m] = nuevos_gastos.get(m, 0.0) + mdesc
+        nuevos_gastos[m] = round(nuevos_gastos.get(m, 0.0) + mdesc, 2)
 
     # Consultar presupuesto por marca para este asesor
     ppto_res = supabase.table("presupuesto").select("marca, ppto_mensual").eq("asesor", username).execute()
@@ -286,11 +286,11 @@ async def crear_solicitud(data: Dict[str, Any]):
         estado = "aprobada" # Auto-aprobación si está bajo límite vendedor
     
     folio = await generate_folio()
-    monto_total = sum(float(s.get("monto_descuento") or 0) for s in skus)
+    monto_total = round(sum(float(s.get("monto_descuento") or 0) for s in skus), 2)
     sla = add_business_hours(datetime.now(), 48)
 
     # 4. Insertar Cabecera
-    sol_res = supabase.table("solicitudes").insert({
+    sol_data = {
         "folio": folio,
         "cliente_codigo": data.get("cliente_codigo"),
         "cliente_nombre": data.get("cliente_nombre"),
@@ -303,7 +303,16 @@ async def crear_solicitud(data: Dict[str, Any]):
         "aprobador_actual_id": aprobador_id,
         "sla_deadline": sla.isoformat(),
         "created_at": datetime.now().isoformat()
-    }).execute()
+    }
+    
+    if estado == "aprobada":
+        sol_data.update({
+            "monto_total_aprobado": monto_total,
+            "aprobador_final_id": vendedor_id,
+            "approved_at": datetime.now().isoformat()
+        })
+        
+    sol_res = supabase.table("solicitudes").insert(sol_data).execute()
     solicitud = sol_res.data[0]
 
     # Auditoría
@@ -311,46 +320,40 @@ async def crear_solicitud(data: Dict[str, Any]):
     await log_audit(vendedor_id, user_full_name, "crear_solicitud", "solicitud", solicitud["id"], f"Folio: {folio}")
 
     # 5. Insertar SKUs
+    skus_guardados = []
     for sku in skus:
-        pb, pd = float(sku.get("precio_base") or 0), float(sku.get("porcentaje_descuento_sol") or 0)
+        pb = float(sku.get("precio_base") or 0)
+        pd = float(sku.get("porcentaje_descuento_sol") or 0)
+        mdesc = float(sku.get("monto_descuento") or 0)
         sku_data = {
             "solicitud_id": solicitud["id"],
             "marca": sku.get("marca"),
             "codigo_sku": sku.get("codigo_sku"),
             "descripcion": sku.get("descripcion"),
             "cantidad": sku.get("cantidad"),
-            "precio_base": pb,
-            "porcentaje_descuento_sol": pd,
-            "precio_solicitado": pb * (1 - (pd / 100)),
-            "monto_descuento": sku.get("monto_descuento"),
+            "precio_base": round(pb, 2),
+            "porcentaje_descuento_sol": round(pd, 2),
+            "precio_solicitado": round(pb * (1 - (pd / 100)), 2),
+            "monto_descuento": round(mdesc, 2),
             "bdf": sku.get("bdf")
         }
         if estado == "aprobada":
             sku_data.update({
                 "sku_estado": "aprobado",
-                "porcentaje_aprobado": pd,
-                "precio_aprobado": pb * (1 - (pd / 100)),
-                "monto_aprobado": sku.get("monto_descuento"),
+                "porcentaje_aprobado": round(pd, 2),
+                "precio_aprobado": round(pb * (1 - (pd / 100)), 2),
+                "monto_aprobado": round(mdesc, 2),
                 "aprobado_por": vendedor_id,
                 "aprobado_at": datetime.now().isoformat()
             })
+        
         supabase.table("solicitud_skus").insert(sku_data).execute()
+        skus_guardados.append(sku_data)
 
     # Determinar si se envía webhook de creación o de aprobación
     if aprobador_nivel == "vendedor":
-        # Recargar los SKUs desde Supabase para incluir campos aprobados (porcentaje_aprobado, precio_aprobado, etc.)
-        try:
-            skus_guardados = supabase.table("solicitud_skus").select("*").eq("solicitud_id", solicitud["id"]).execute().data or skus
-        except Exception:
-            skus_guardados = skus
-        
-        # También recargar la solicitud con campos actualizados
-        try:
-            solicitud_actualizada = supabase.table("solicitudes").select("*").eq("id", solicitud["id"]).single().execute().data or solicitud
-        except Exception:
-            solicitud_actualizada = solicitud
-
-        send_n8n_webhook("aprobada", solicitud_actualizada, skus_guardados, {
+        # Usamos los SKUs guardados y la solicitud que ya están listos en memoria con los campos de aprobación
+        send_n8n_webhook("aprobada", solicitud, skus_guardados, {
             "vendedor": user,
             "aprobador": user,
             "email_destinatario": user.get("email")

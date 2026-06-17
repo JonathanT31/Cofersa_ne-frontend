@@ -449,7 +449,7 @@ const NuevaSolicitud = () => {
               cantidad: parseFloat(s.cantidad),
               precio_base: parseFloat(s.precio_base),
               porcentaje_descuento_sol: parseFloat(s.pct),
-              monto_descuento: s.mdesc,
+              monto_descuento: Math.round(parseFloat(s.mdesc || 0) * 100) / 100,
               bdf: s.bdf
             })),
             vendedor_id: user?.id
