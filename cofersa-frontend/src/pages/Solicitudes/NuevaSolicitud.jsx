@@ -274,7 +274,7 @@ const NuevaSolicitud = () => {
         cantidad: 1,
         precio: initialData.precio || '',
         precio_base: initialData.precio_base || '',
-        pct: '',
+        pct: '0',
         psol: '',
         mdesc: 0,
         bdf: initialData.bdf || '',
@@ -290,13 +290,27 @@ const NuevaSolicitud = () => {
   const updateSku = (id, field, value) => {
     setSkus(skus.map(s => {
       if (s.id !== id) return s;
-      if (field === 'pct') {
-        const valNum = parseFloat(value);
-        if (valNum < 0) value = '0';
+      
+      let cleanedValue = value;
+      if (value === '') {
+        cleanedValue = 0; 
       }
-      const updated = { ...s, [field]: value };
+      if (field === 'mdesc' && typeof value === 'string') {
+        cleanedValue = value.replace(/[^0-9.-]/g, '');
+      }
+      
+      if (field === 'pct') {
+        const valNum = parseFloat(cleanedValue || value);
+        if (valNum < 0) cleanedValue = '0';
+      }
+      if (field === 'mdesc') {
+        const valNum = parseFloat(cleanedValue);
+        if (valNum < 0) cleanedValue = '0';
+      }
+      
+      const updated = { ...s, [field]: value === '' ? '' : (cleanedValue || value) };
 
-      if (['cantidad', 'precio_base', 'pct', 'psol'].includes(field)) {
+      if (['cantidad', 'precio_base', 'pct', 'psol', 'mdesc'].includes(field)) {
         const cant = parseFloat(updated.cantidad) || 0;
         const lpv = parseFloat(updated.precio_base) || 0;
         
@@ -320,11 +334,48 @@ const NuevaSolicitud = () => {
           } else {
             updated.mdesc = 0;
           }
+        } else if (field === 'mdesc' || (field === 'precio_base' && updated.lastEdited === 'mdesc')) {
+          updated.lastEdited = 'mdesc';
+          const mdescTotal = parseFloat(updated.mdesc) || 0;
+          if (lpv > 0 && cant > 0) {
+            const mdescPorUnidad = mdescTotal / cant;
+            const pct = (mdescPorUnidad / lpv) * 100;
+            updated.pct = pct.toFixed(2);
+            const psol = lpv * (1 - pct / 100);
+            updated.psol = psol.toFixed(2);
+          } else if (lpv > 0) {
+            // Si cantidad es 0, calcular porcentaje basado en monto total directamente
+            const pct = (mdescTotal / lpv) * 100;
+            updated.pct = pct.toFixed(2);
+            const psol = lpv * (1 - pct / 100);
+            updated.psol = psol.toFixed(2);
+          } else {
+            updated.pct = '0';
+            updated.psol = '';
+          }
         } else if (field === 'cantidad') {
-           const psol = parseFloat(updated.psol) || 0;
-           if (lpv > 0) {
-             updated.mdesc = (lpv - psol) * cant;
-           }
+          // Si lastEdited era 'mdesc', mantener el monto total constante y recalcular porcentaje
+          if (updated.lastEdited === 'mdesc') {
+            const mdescTotal = parseFloat(updated.mdesc) || 0;
+            if (lpv > 0 && cant > 0) {
+              const mdescPorUnidad = mdescTotal / cant;
+              const pct = (mdescPorUnidad / lpv) * 100;
+              updated.pct = pct.toFixed(2);
+              const psol = lpv * (1 - pct / 100);
+              updated.psol = psol.toFixed(2);
+            } else if (lpv > 0) {
+              // Si cantidad es 0, mantener el porcentaje actual
+              const pct = parseFloat(updated.pct) || 0;
+              updated.psol = (lpv * (1 - pct / 100)).toFixed(2);
+              updated.mdesc = 0;
+            }
+          } else {
+            // Recalcular mdesc basado en psol actual (comportamiento original)
+            const psol = parseFloat(updated.psol) || 0;
+            if (lpv > 0) {
+              updated.mdesc = (lpv - psol) * cant;
+            }
+          }
         }
       }
       return updated;
@@ -416,7 +467,8 @@ const NuevaSolicitud = () => {
       descripcion: producto.DESCRIPCION,
       precio: producto.PRECIO,
       precio_base: producto.PRECIO,
-      bdf: producto.BDF
+      bdf: producto.BDF,
+      pct: 0
     });
     setInfocSearch('');
   };
@@ -759,7 +811,7 @@ const NuevaSolicitud = () => {
               </div>
               <div className="form-group">
                 <label>Precio LPV ₡ *</label>
-                <input type="number" className="form-control" value={s.precio_base} onChange={e => updateSku(s.id, 'precio_base', e.target.value)} disabled={submitting} />
+                <input type="number" className="form-control" readOnly value={s.precio_base} /*onChange={e => updateSku(s.id, 'precio_base', e.target.value)}*/ disabled={submitting} />
               </div>
               <div className="form-group">
                 <label>% Desc. Sol. *</label>
@@ -767,7 +819,15 @@ const NuevaSolicitud = () => {
               </div>
               <div className="form-group">
                 <label>Monto Desc. ₡</label>
-                <input type="text" className="form-control" readOnly style={{ background: '#f8f8f8' }} value={formatCRC(s.mdesc)} />
+                <input 
+                  type="number" 
+                  className="form-control" 
+                  style={{ background: '#f8f8f8' }} 
+                  value={s.mdesc === 0 || !s.mdesc ? '' : s.mdesc} 
+                  onChange={e => updateSku(s.id, 'mdesc', e.target.value)} 
+                  min="0" 
+                  step="0.01" 
+                />
               </div>
             </div>
 
@@ -807,7 +867,7 @@ const NuevaSolicitud = () => {
         ))}
 
         <div className="actions-bar" style={{ marginTop: '20px' }}>
-          <button type="button" className="btn btn-success" onClick={enviarSolicitud} disabled={submitting}>
+          <button type="button" className={submitting ? "btn btn-success-loading" : "btn btn-success"} onClick={enviarSolicitud} disabled={submitting}>
             {submitting ? 'Enviando...' : 'Enviar Solicitud'}
           </button>
           <button type="button" className="btn btn-outline" onClick={() => navigate('/')} disabled={submitting}>Cancelar</button>

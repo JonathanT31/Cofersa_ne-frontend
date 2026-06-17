@@ -39,6 +39,7 @@ h3 { font-size: 15px; margin-bottom: 8px; font-weight: 600; }
 .btn-primary { background: var(--primary); color: white; }
 .btn-primary:hover { background: var(--primary-light); }
 .btn-success { background: var(--success); color: white; }
+.btn-success-loading { background: #5DE396; color: white; }
 .btn-success:hover { background: #1e8449; }
 .btn-danger { background: var(--danger); color: white; }
 .btn-danger:hover { background: #c0392b; }
