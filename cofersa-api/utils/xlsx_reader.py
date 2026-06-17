@@ -148,6 +148,6 @@ def import_presupuesto_from_xlsx(filepath) -> List[Dict[str, Any]]:
                 'supervisor': supervisor,
                 'asesor': asesor,
                 'marca': marca,
-                'ppto_mensual_crc': ppto,
+                'ppto_mensual': ppto,
             })
     return results

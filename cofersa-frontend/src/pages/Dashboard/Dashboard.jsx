@@ -125,13 +125,13 @@ const Dashboard = () => {
   if (user.role === 'vendedor') {
     totalPptoMensual = presupuesto
       .filter(p => p.asesor === user.username)
-      .reduce((sum, p) => sum + (p.ppto_mensual_crc || 0), 0);
+      .reduce((sum, p) => sum + (p.ppto_mensual || 0), 0);
   } else if (user.role === 'supervisor') {
     totalPptoMensual = presupuesto
       .filter(p => p.supervisor === user.username)
-      .reduce((sum, p) => sum + (p.ppto_mensual_crc || 0), 0);
+      .reduce((sum, p) => sum + (p.ppto_mensual || 0), 0);
   } else {
-    totalPptoMensual = presupuesto.reduce((sum, p) => sum + (p.ppto_mensual_crc || 0), 0);
+    totalPptoMensual = presupuesto.reduce((sum, p) => sum + (p.ppto_mensual || 0), 0);
   }
 
   // --- TIME FILTERS ---
@@ -196,7 +196,7 @@ const Dashboard = () => {
   profiles.filter(p => p.role === 'supervisor').forEach(sup => {
     const supBudget = presupuesto
       .filter(p => p.supervisor === sup.username)
-      .reduce((sum, p) => sum + (p.ppto_mensual_crc || 0), 0);
+      .reduce((sum, p) => sum + (p.ppto_mensual || 0), 0);
 
     supervisorStatsMes[sup.id] = {
       nombre: `${sup.nombre} ${sup.apellido}`,
@@ -257,7 +257,7 @@ const Dashboard = () => {
   const brandBudgets = {};
   presupuesto.forEach(p => {
     if (p.marca) {
-      brandBudgets[p.marca] = (brandBudgets[p.marca] || 0) + (p.ppto_mensual_crc || 0);
+      brandBudgets[p.marca] = (brandBudgets[p.marca] || 0) + (p.ppto_mensual || 0);
     }
   });
 

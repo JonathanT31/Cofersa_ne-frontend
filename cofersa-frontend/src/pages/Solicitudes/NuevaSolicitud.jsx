@@ -99,16 +99,16 @@ const NuevaSolicitud = () => {
     const fetchBudget = async () => {
       try {
         // 1. Presupuesto por marca para este vendedor
-        const nombreVendedor = (user.full_name || user.nombre || '').trim();
+        const usernameVendedor = (user.username || '').trim();
         const pdict = {};
-        if (nombreVendedor) {
+        if (usernameVendedor) {
           const { data: ppto, error: pptoErr } = await supabase
             .from('presupuesto')
-            .select('marca, ppto_mensual_crc, asesor')
-            .ilike('asesor', nombreVendedor);
+            .select('marca, ppto_mensual, asesor')
+            .eq('asesor', usernameVendedor);
           if (!pptoErr && ppto) {
             ppto.forEach(p => {
-              if (p.marca) pdict[p.marca] = parseFloat(p.ppto_mensual_crc) || 0;
+              if (p.marca) pdict[p.marca] = parseFloat(p.ppto_mensual) || 0;
             });
           }
         }
@@ -290,6 +290,10 @@ const NuevaSolicitud = () => {
   const updateSku = (id, field, value) => {
     setSkus(skus.map(s => {
       if (s.id !== id) return s;
+      if (field === 'pct') {
+        const valNum = parseFloat(value);
+        if (valNum < 0) value = '0';
+      }
       const updated = { ...s, [field]: value };
 
       if (['cantidad', 'precio_base', 'pct', 'psol'].includes(field)) {
@@ -339,6 +343,27 @@ const NuevaSolicitud = () => {
       if (!s.codigo_sku.trim()) errors.push(`Línea #${s.id}: Código SKU requerido.`);
       if (parseFloat(s.cantidad) <= 0) errors.push(`Línea #${s.id}: Cantidad debe ser mayor a 0.`);
       if (parseFloat(s.precio_base) <= 0) errors.push(`Línea #${s.id}: Precio LPV debe ser mayor a 0.`);
+    });
+
+    // Validar presupuesto
+    const nuevosGastos = {};
+    skus.forEach(s => {
+      if (s.marca) {
+        nuevosGastos[s.marca] = (nuevosGastos[s.marca] || 0) + (parseFloat(s.mdesc) || 0);
+      }
+    });
+
+    Object.entries(nuevosGastos).forEach(([marca, mdesc]) => {
+      const ppto = presupuestoDict[marca];
+      if (ppto === undefined || ppto === null || ppto <= 0) {
+        errors.push(`No hay presupuesto asignado para la marca ${marca}.`);
+      } else {
+        const gastado = gastoDict[marca] || 0;
+        if (gastado + mdesc > ppto) {
+          const disponible = Math.max(0, ppto - gastado);
+          errors.push(`El descuento solicitado para la marca ${marca} (${formatCRC(mdesc)}) supera el presupuesto disponible (${formatCRC(disponible)}).`);
+        }
+      }
     });
 
     setFormErrors(errors);
@@ -738,7 +763,7 @@ const NuevaSolicitud = () => {
               </div>
               <div className="form-group">
                 <label>% Desc. Sol. *</label>
-                <input type="number" className="form-control" value={s.pct} onChange={e => updateSku(s.id, 'pct', e.target.value)} disabled={submitting} />
+                <input type="number" className="form-control" value={s.pct} onChange={e => updateSku(s.id, 'pct', e.target.value)} min="0" disabled={submitting} />
               </div>
               <div className="form-group">
                 <label>Monto Desc. ₡</label>

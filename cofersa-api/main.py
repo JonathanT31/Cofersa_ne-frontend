@@ -176,6 +176,53 @@ async def crear_solicitud(data: Dict[str, Any]):
     reglas_res = supabase.table("reglas").select("*").execute()
     reglas = {r['marca']: r for r in reglas_res.data}
 
+    # 1.5. Validar Presupuesto
+    username = user.get("username", "")
+    if not username:
+        raise HTTPException(status_code=400, detail="El vendedor no tiene un nombre de usuario configurado.")
+
+    # Agrupar nuevo gasto propuesto por marca
+    nuevos_gastos = {}
+    for sku in skus:
+        m = sku.get("marca")
+        mdesc = float(sku.get("monto_descuento") or 0)
+        nuevos_gastos[m] = nuevos_gastos.get(m, 0.0) + mdesc
+
+    # Consultar presupuesto por marca para este asesor
+    ppto_res = supabase.table("presupuesto").select("marca, ppto_mensual").eq("asesor", username).execute()
+    ppto_dict = {p["marca"]: float(p["ppto_mensual"] or 0) for p in ppto_res.data} if ppto_res.data else {}
+
+    # Consultar gasto acumulado del mes actual (excluyendo rechazadas)
+    now = datetime.now()
+    month_start = datetime(now.year, now.month, 1).isoformat()
+    
+    sols_res = supabase.table("solicitudes").select("id").eq("vendedor_id", vendedor_id).gte("created_at", month_start).neq("estado", "rechazada").execute()
+    sol_ids = [s["id"] for s in sols_res.data] if sols_res.data else []
+    
+    gasto_dict = {}
+    if sol_ids:
+        skus_res = supabase.table("solicitud_skus").select("marca, monto_aprobado, monto_descuento, sku_estado").in_("solicitud_id", sol_ids).execute()
+        if skus_res.data:
+            for sk in skus_res.data:
+                if sk.get("sku_estado") == "rechazado":
+                    continue
+                val = sk.get("monto_aprobado")
+                if val is None or val == "":
+                    val = sk.get("monto_descuento")
+                val = float(val or 0)
+                m = sk.get("marca", "")
+                gasto_dict[m] = gasto_dict.get(m, 0.0) + val
+
+    # Validar que no se pase del presupuesto asignado o que tenga presupuesto
+    for marca, nuevo_monto in nuevos_gastos.items():
+        ppto_lim = ppto_dict.get(marca)
+        if ppto_lim is None or ppto_lim <= 0:
+            raise HTTPException(status_code=400, detail=f"No hay presupuesto asignado para la marca {marca}.")
+        gasto_act = gasto_dict.get(marca, 0.0)
+        if (gasto_act + nuevo_monto) > ppto_lim:
+            disponible = max(0.0, ppto_lim - gasto_act)
+            raise HTTPException(status_code=400, detail=f"El descuento solicitado para la marca {marca} (₡{nuevo_monto:,.2f}) supera el presupuesto disponible (₡{disponible:,.2f}).")
+
     # 2. Ruteo de 3 niveles (Lógica oficial)
     aprobador_nivel = "vendedor"
     max_pcts = {}
@@ -219,12 +266,13 @@ async def crear_solicitud(data: Dict[str, Any]):
     solicitud = sol_res.data[0]
 
     # Auditoría
-    await log_audit(vendedor_id, user.get("full_name", "Vendedor"), "crear_solicitud", "solicitud", solicitud["id"], f"Folio: {folio}")
+    user_full_name = f"{user.get('nombre', '')} {user.get('apellido', '')}".strip() or user.get("username", "Vendedor")
+    await log_audit(vendedor_id, user_full_name, "crear_solicitud", "solicitud", solicitud["id"], f"Folio: {folio}")
 
     # 5. Insertar SKUs
     for sku in skus:
         pb, pd = float(sku.get("precio_base") or 0), float(sku.get("porcentaje_descuento_sol") or 0)
-        supabase.table("solicitud_skus").insert({
+        sku_data = {
             "solicitud_id": solicitud["id"],
             "marca": sku.get("marca"),
             "codigo_sku": sku.get("codigo_sku"),
@@ -235,38 +283,52 @@ async def crear_solicitud(data: Dict[str, Any]):
             "precio_solicitado": pb * (1 - (pd / 100)),
             "monto_descuento": sku.get("monto_descuento"),
             "bdf": sku.get("bdf")
-        }).execute()
+        }
+        if estado == "aprobada":
+            sku_data.update({
+                "sku_estado": "aprobado",
+                "porcentaje_aprobado": pd,
+                "precio_aprobado": pb * (1 - (pd / 100)),
+                "monto_aprobado": sku.get("monto_descuento"),
+                "aprobado_por": vendedor_id,
+                "aprobado_at": datetime.now().isoformat()
+            })
+        supabase.table("solicitud_skus").insert(sku_data).execute()
 
-    # Call n8n webhook on creation — include recipient email so n8n knows where to send
-    # Determine who receives the email notification
-    aprobador_info = {}
-    email_destinatario = None
+    # Determinar si se envía webhook de creación o de aprobación
+    if aprobador_nivel == "vendedor":
+        send_n8n_webhook("aprobada", solicitud, skus, {
+            "vendedor": user,
+            "aprobador": user,
+            "email_destinatario": user.get("email")
+        })
+    else:
+        aprobador_info = {}
+        email_destinatario = None
 
-    if aprobador_nivel == "supervisor" and aprobador_id:
-        try:
-            sup_res = supabase.table("profiles").select("*").eq("id", aprobador_id).single().execute()
-            aprobador_info = sup_res.data or {}
-            email_destinatario = aprobador_info.get("email")
-        except Exception as e:
-            print(f"No se pudo obtener perfil del supervisor: {e}")
-    elif aprobador_nivel == "compras":
-        # Fall back to the compras email defined in .env
-        email_destinatario = COMPRAS_EMAIL
-        # Try to get the compras profile for richer info
-        try:
-            compras_res = supabase.table("profiles").select("*").eq("role", "compras").eq("status", "activo").limit(1).execute()
-            if compras_res.data:
-                aprobador_info = compras_res.data[0]
-                email_destinatario = aprobador_info.get("email") or COMPRAS_EMAIL
-        except Exception as e:
-            print(f"No se pudo obtener perfil de compras: {e}")
+        if aprobador_nivel == "supervisor" and aprobador_id:
+            try:
+                sup_res = supabase.table("profiles").select("*").eq("id", aprobador_id).single().execute()
+                aprobador_info = sup_res.data or {}
+                email_destinatario = aprobador_info.get("email")
+            except Exception as e:
+                print(f"No se pudo obtener perfil del supervisor: {e}")
+        elif aprobador_nivel == "compras":
+            email_destinatario = COMPRAS_EMAIL
+            try:
+                compras_res = supabase.table("profiles").select("*").eq("role", "compras").eq("status", "activo").limit(1).execute()
+                if compras_res.data:
+                    aprobador_info = compras_res.data[0]
+                    email_destinatario = aprobador_info.get("email") or COMPRAS_EMAIL
+            except Exception as e:
+                print(f"No se pudo obtener perfil de compras: {e}")
 
-    send_n8n_webhook("creada", solicitud, skus, {
-        "vendedor": user,
-        "aprobador_nivel": aprobador_nivel,
-        "aprobador": aprobador_info,
-        "email_destinatario": email_destinatario,
-    })
+        send_n8n_webhook("creada", solicitud, skus, {
+            "vendedor": user,
+            "aprobador_nivel": aprobador_nivel,
+            "aprobador": aprobador_info,
+            "email_destinatario": email_destinatario
+        })
 
     return {"status": "success", "solicitud_id": solicitud["id"], "folio": folio}
 

@@ -7,14 +7,105 @@ const formatCRC = (n) => {
   return "₡" + Number(n).toLocaleString('en', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 };
 
+const SearchableSelect = ({ value, onChange, onBlur, options, placeholder }) => {
+  const [search, setSearch] = useState('');
+  const [isOpen, setIsOpen] = useState(false);
+
+  useEffect(() => {
+    const matched = options.find(o => o.value === value);
+    setSearch(matched ? matched.label : value || '');
+  }, [value, options]);
+
+  const filtered = options.filter(o => 
+    o.label.toLowerCase().includes(search.toLowerCase()) ||
+    o.value.toLowerCase().includes(search.toLowerCase())
+  );
+
+  const handleSelect = (option) => {
+    onChange(option.value);
+    setSearch(option.label);
+    setIsOpen(false);
+    if (onBlur) {
+      onBlur(option.value);
+    }
+  };
+
+  useEffect(() => {
+    if (!isOpen) return;
+    const handleClick = (e) => {
+      if (!e.target.closest('.search-select-container')) {
+        setIsOpen(false);
+        const matched = options.find(o => o.value === value);
+        setSearch(matched ? matched.label : value || '');
+        if (onBlur) onBlur(value);
+      }
+    };
+    document.addEventListener('mousedown', handleClick);
+    return () => document.removeEventListener('mousedown', handleClick);
+  }, [isOpen, value, options]);
+
+  return (
+    <div className="search-select-container" style={{ position: 'relative', minWidth: '180px' }}>
+      <input 
+        type="text" 
+        className="form-control" 
+        value={search} 
+        onChange={e => {
+          setSearch(e.target.value);
+          setIsOpen(true);
+        }}
+        onFocus={() => setIsOpen(true)}
+        placeholder={placeholder}
+        style={{ width: '100%' }}
+      />
+      {isOpen && (
+        <div style={{
+          position: 'absolute',
+          top: '100%',
+          left: 0,
+          right: 0,
+          background: '#fff',
+          border: '1px solid #cbd5e1',
+          borderRadius: '6px',
+          zIndex: 1000,
+          maxHeight: '180px',
+          overflowY: 'auto',
+          boxShadow: '0 4px 6px -1px rgba(0,0,0,0.1), 0 2px 4px -1px rgba(0,0,0,0.06)'
+        }}>
+          {filtered.length > 0 ? (
+            filtered.map(opt => (
+              <div 
+                key={opt.value} 
+                style={{ padding: '8px 12px', cursor: 'pointer', borderBottom: '1px solid #f1f5f9', fontSize: '13px' }}
+                onClick={() => handleSelect(opt)}
+                onMouseEnter={e => e.currentTarget.style.background = '#f1f5f9'}
+                onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
+              >
+                {opt.label}
+              </div>
+            ))
+          ) : (
+            <div style={{ padding: '8px 12px', color: '#94a3b8', fontSize: '12px' }}>No se encontraron opciones</div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+};
+
 const Presupuesto = () => {
   const [presupuesto, setPresupuesto] = useState([]);
   const [loading, setLoading] = useState(true);
   const [importing, setImporting] = useState(false);
   const [file, setFile] = useState(null);
 
+  // States for search dropdowns
+  const [profiles, setProfiles] = useState([]);
+  const [marcas, setMarcas] = useState([]);
+
   useEffect(() => {
     fetchPresupuesto();
+    fetchSupportData();
   }, []);
 
   const fetchPresupuesto = async () => {
@@ -32,6 +123,25 @@ const Presupuesto = () => {
     } finally {
       setLoading(false);
     }  
+  };
+
+  const fetchSupportData = async () => {
+    try {
+      const { data: profs } = await supabase
+        .from('profiles')
+        .select('username, nombre, apellido, role');
+      setProfiles(profs || []);
+
+      const { data: rules } = await supabase
+        .from('reglas')
+        .select('marca');
+      if (rules) {
+        const uniqueMarcas = [...new Set(rules.map(r => r.marca))].sort();
+        setMarcas(uniqueMarcas);
+      }
+    } catch (err) {
+      console.error('Error fetching support data:', err);
+    }
   };
 
   const handleImport = async (e) => {
@@ -68,7 +178,7 @@ const Presupuesto = () => {
       p.supervisor || '',
       p.asesor || '',
       p.marca || '',
-      p.ppto_mensual_crc ?? 0
+      p.ppto_mensual ?? 0
     ]);
     
     let csvContent = "data:text/csv;charset=utf-8,\uFEFF";
@@ -89,7 +199,7 @@ const Presupuesto = () => {
       supervisor: '',
       asesor: '',
       marca: '',
-      ppto_mensual_crc: 0
+      ppto_mensual: 0
     }, ...presupuesto]);
   };
 
@@ -106,11 +216,14 @@ const Presupuesto = () => {
     const isNew = typeof row.id === 'string' && row.id.startsWith('new-');
     
     if (isNew) {
+      // We only insert if both marca and asesor have values
       if (!row.marca || !row.marca.trim() || !row.asesor || !row.asesor.trim()) {
-        return; // Esperar a que ingresen mínimo asesor y marca
+        return; 
       }
       try {
         const { id, ...dataToInsert } = row;
+        // Ensure to save the latest updated field/value in dataToInsert
+        dataToInsert[field] = value;
         const { data, error } = await supabase
           .from('presupuesto')
           .insert([dataToInsert])
@@ -151,6 +264,17 @@ const Presupuesto = () => {
       else fetchPresupuesto();
     }
   };
+
+  // Prepare options for select fields
+  const supervisorOptions = profiles
+    .filter(p => p.role === 'supervisor' || p.role === 'admin')
+    .map(p => ({ value: p.username, label: `${p.nombre} ${p.apellido} (${p.username})` }));
+
+  const asesorOptions = profiles
+    .filter(p => p.role === 'vendedor' || p.role === 'admin')
+    .map(p => ({ value: p.username, label: `${p.nombre} ${p.apellido} (${p.username})` }));
+
+  const marcaOptions = marcas.map(m => ({ value: m, label: m }));
 
   return (
     <Layout title="Presupuesto" active="presupuesto">
@@ -196,33 +320,30 @@ const Presupuesto = () => {
                 <tr key={p.id}>
                   <td>{index + 1}</td>
                   <td>
-                    <input 
-                      type="text" 
-                      className="form-control" 
-                      value={p.supervisor} 
-                      onChange={e => handleCellChange(p.id, 'supervisor', e.target.value)}
-                      onBlur={e => handleCellBlur(p, 'supervisor', e.target.value)}
-                      style={{ minWidth: '120px' }}
+                    <SearchableSelect 
+                      value={p.supervisor}
+                      onChange={val => handleCellChange(p.id, 'supervisor', val)}
+                      onBlur={val => handleCellBlur(p, 'supervisor', val)}
+                      options={supervisorOptions}
+                      placeholder="Seleccionar..."
                     />
                   </td>
                   <td>
-                    <input 
-                      type="text" 
-                      className="form-control" 
-                      value={p.asesor} 
-                      onChange={e => handleCellChange(p.id, 'asesor', e.target.value)}
-                      onBlur={e => handleCellBlur(p, 'asesor', e.target.value)}
-                      style={{ minWidth: '120px' }}
+                    <SearchableSelect 
+                      value={p.asesor}
+                      onChange={val => handleCellChange(p.id, 'asesor', val)}
+                      onBlur={val => handleCellBlur(p, 'asesor', val)}
+                      options={asesorOptions}
+                      placeholder="Seleccionar..."
                     />
                   </td>
                   <td>
-                    <input 
-                      type="text" 
-                      className="form-control" 
-                      value={p.marca} 
-                      onChange={e => handleCellChange(p.id, 'marca', e.target.value)}
-                      onBlur={e => handleCellBlur(p, 'marca', e.target.value)}
-                      style={{ minWidth: '100px' }}
+                    <SearchableSelect 
+                      value={p.marca}
+                      onChange={val => handleCellChange(p.id, 'marca', val)}
+                      onBlur={val => handleCellBlur(p, 'marca', val)}
+                      options={marcaOptions}
+                      placeholder="Seleccionar..."
                     />
                   </td>
                   <td className="text-right">
@@ -231,10 +352,10 @@ const Presupuesto = () => {
                       <input 
                         type="number" 
                         className="form-control text-right" 
-                        value={p.ppto_mensual_crc}
-                        onChange={e => handleCellChange(p.id, 'ppto_mensual_crc', parseFloat(e.target.value) || 0)}
-                        onBlur={e => handleCellBlur(p, 'ppto_mensual_crc', parseFloat(e.target.value) || 0)}
-                        style={{ width: '130px' }}
+                        value={p.ppto_mensual}
+                        onChange={e => handleCellChange(p.id, 'ppto_mensual', parseFloat(e.target.value) || 0)}
+                        onBlur={e => handleCellBlur(p, 'ppto_mensual', parseFloat(e.target.value) || 0)}
+                        style={{ width: '130px', minHeight: '34px', height: '34px' }}
                       />
                     </div>
                   </td>

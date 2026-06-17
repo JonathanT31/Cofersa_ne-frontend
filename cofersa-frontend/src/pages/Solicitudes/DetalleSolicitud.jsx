@@ -184,7 +184,7 @@ const DetalleSolicitud = () => {
           .eq('asesor', vendedorUsername);
         if (pData) {
           pData.forEach(p => {
-            pptoMap[p.marca] = (pptoMap[p.marca] || 0) + (parseFloat(p.ppto_mensual_crc) || 0);
+            pptoMap[p.marca] = (pptoMap[p.marca] || 0) + (parseFloat(p.ppto_mensual) || 0);
           });
         }
       }
