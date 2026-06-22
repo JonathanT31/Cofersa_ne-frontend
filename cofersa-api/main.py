@@ -256,13 +256,19 @@ async def crear_solicitud(data: Dict[str, Any]):
 
     # Validar que no se pase del presupuesto asignado o que tenga presupuesto
     for marca, nuevo_monto in nuevos_gastos.items():
-        ppto_lim = ppto_dict.get(marca)
-        if ppto_lim is None or ppto_lim <= 0:
-            raise HTTPException(status_code=400, detail=f"No hay presupuesto asignado para la marca {marca}.")
-        gasto_act = gasto_dict.get(marca, 0.0)
-        if (gasto_act + nuevo_monto) > ppto_lim:
-            disponible = max(0.0, ppto_lim - gasto_act)
-            raise HTTPException(status_code=400, detail=f"El descuento solicitado para la marca {marca} (₡{nuevo_monto:,.2f}) supera el presupuesto disponible (₡{disponible:,.2f}).")
+        # Usar un umbral de 0.01 para ignorar residuos de punto flotante del frontend
+        if nuevo_monto >= 0.01:
+            ppto_lim = ppto_dict.get(marca)
+            
+            # Si ppto_lim es None (no existe la fila) o <= 0, bloqueamos
+            if ppto_lim is None or ppto_lim <= 0:
+                raise HTTPException(status_code=400, detail=f"No hay presupuesto asignado para la marca {marca}. Solo se permiten descuentos de 0%.")
+            
+            gasto_act = gasto_dict.get(marca, 0.0)
+            # Redondear ambas partes a 2 decimales para evitar que 0.0000001 de diferencia lance error
+            if round(gasto_act + nuevo_monto, 2) > round(ppto_lim, 2):
+                disponible = max(0.0, ppto_lim - gasto_act)
+                raise HTTPException(status_code=400, detail=f"El descuento solicitado para la marca {marca} (₡{nuevo_monto:,.2f}) supera el presupuesto disponible (₡{disponible:,.2f}).")
 
     # 2. Ruteo de 3 niveles (Lógica oficial)
     aprobador_nivel = "vendedor"

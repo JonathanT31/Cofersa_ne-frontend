@@ -410,21 +410,29 @@ const NuevaSolicitud = () => {
     const nuevosGastos = {};
     skus.forEach(s => {
       if (s.marca) {
-        nuevosGastos[s.marca] = (nuevosGastos[s.marca] || 0) + (parseFloat(s.mdesc) || 0);
+        const descuentoLinea = Math.round((parseFloat(s.mdesc) || 0) * 100) / 100;
+        nuevosGastos[s.marca] = (nuevosGastos[s.marca] || 0) + descuentoLinea;
       }
     });
 
     Object.entries(nuevosGastos).forEach(([marca, mdesc]) => {
-      const ppto = presupuestoDict[marca];
-      if (ppto === undefined || ppto === null || ppto <= 0) {
-        errors.push(`No hay presupuesto asignado para la marca ${marca}.`);
-      } else {
-        const gastado = gastoDict[marca] || 0;
-        if (gastado + mdesc > ppto) {
-          const disponible = Math.max(0, ppto - gastado);
-          errors.push(`El descuento solicitado para la marca ${marca} (${formatCRC(mdesc)}) supera el presupuesto disponible (${formatCRC(disponible)}).`);
+      // Forzar a que mdesc sea un número limpio y compararlo con un margen seguro (0.01)
+      if (mdesc >= 0.01) {
+        const ppto = presupuestoDict[marca];
+        
+        // Si es undefined, null o menor/igual a 0, significa que no tiene presupuesto asignado
+        if (ppto === undefined || ppto === null || ppto <= 0) {
+          errors.push(`No hay presupuesto asignado para la marca ${marca}. Solo se permiten descuentos de 0%.`);
+        } else {
+          const gastado = gastoDict[marca] || 0;
+          // Redondeamos la comparación para evitar alertas fantasma por decimales
+          if (Math.round((gastado + mdesc) * 100) / 100 > Math.round(ppto * 100) / 100) {
+            const disponible = Math.max(0, ppto - gastado);
+            errors.push(`El descuento solicitado para la marca ${marca} (${formatCRC(mdesc)}) supera el presupuesto disponible (${formatCRC(disponible)}).`);
+          }
         }
       }
+      // Si mdesc es 0 (o menor a 0.01), se ignora por completo la validación de presupuesto de descuento.
     });
 
     setFormErrors(errors);
@@ -738,7 +746,9 @@ const NuevaSolicitud = () => {
       <div className="card">
         <div className="page-header" style={{ marginBottom: '14px' }}>
           <h3>Líneas de SKU</h3>
+          {/* 
           <button type="button" className="btn btn-outline btn-sm" onClick={() => addSkuRow()} disabled={submitting}>+ Agregar Manual</button>
+          */}
         </div>
         
         {skus.map(s => (
