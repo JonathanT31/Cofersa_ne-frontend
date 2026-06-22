@@ -58,7 +58,16 @@ def send_n8n_webhook(event_type: str, solicitud: Dict[str, Any], skus: List[Dict
     solicitud_formateada = format_all_dates(solicitud)
     skus_formateados = format_all_dates(skus)
     extra_info_formateada = format_all_dates(extra_info or {})
-    
+
+    # Build the link to the request detail. If a magic link can be generated for the
+    # recipient, the email button logs them in automatically; otherwise it falls back
+    # to the plain URL (which requires a normal login).
+    sol_id = solicitud.get("id") if isinstance(solicitud, dict) else None
+    if sol_id:
+        destino = f"{BASE_URL.rstrip('/')}/solicitud/{sol_id}"
+        email_destinatario = (extra_info or {}).get("email_destinatario")
+        extra_info_formateada["url_solicitud"] = build_login_link(email_destinatario, destino)
+
     payload = {
         "event": event_type,  # "creada", "aprobada", o "rechazada"
         "solicitud": solicitud_formateada,
@@ -97,10 +106,39 @@ app.add_middleware(
 SUPABASE_URL = os.getenv("VITE_SUPABASE_URL")
 SUPABASE_KEY = os.getenv("VITE_SUPABASE_PUBLISHABLE_KEY")
 supabase: Client = create_client(
-    SUPABASE_URL, 
-    SUPABASE_KEY, 
+    SUPABASE_URL,
+    SUPABASE_KEY,
     options=ClientOptions(schema="negociaciones_especiales")
 )
+
+# Admin client (service_role): solo para tareas de servidor como generar magic links.
+# NUNCA exponer esta llave en el frontend.
+SUPABASE_SERVICE_ROLE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
+supabase_admin: Optional[Client] = None
+if SUPABASE_SERVICE_ROLE_KEY:
+    try:
+        supabase_admin = create_client(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
+    except Exception as e:
+        print(f"No se pudo inicializar el cliente admin de Supabase: {e}")
+        supabase_admin = None
+
+
+def build_login_link(email: Optional[str], redirect_to: str) -> str:
+    """Devuelve un magic link de Supabase que loguea automáticamente al destinatario
+    y lo deja en `redirect_to`. Si no hay service_role key, no se conoce el email, o
+    falla la generación, regresa la URL normal (que pedirá login como siempre)."""
+    if not (supabase_admin and email):
+        return redirect_to
+    try:
+        resp = supabase_admin.auth.admin.generate_link({
+            "type": "magiclink",
+            "email": email,
+            "options": {"redirect_to": redirect_to},
+        })
+        return resp.properties.action_link or redirect_to
+    except Exception as e:
+        print(f"No se pudo generar magic link para {email}: {e}")
+        return redirect_to
 
 SMTP_CONFIG = {
     "host": os.getenv("SMTP_HOST", "smtp.gmail.com"),
