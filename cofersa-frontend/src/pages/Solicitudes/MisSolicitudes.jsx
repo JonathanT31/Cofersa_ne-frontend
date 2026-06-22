@@ -143,7 +143,7 @@ const MisSolicitudes = () => {
                     <td>{s.cliente_nombre}</td>
                     <td>{s.numero_pedido || '—'}</td>
                     <td className="text-right"><EstadoBadge estado={s.estado} /></td>
-                    <td>{s.created_at?.substring(0, 16)}</td>
+                    <td>{s.created_at?.substring(0, 16).replaceAll("T"," ")}</td>
                   </tr>
                 ))
               ) : (
