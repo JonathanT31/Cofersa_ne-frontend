@@ -310,33 +310,33 @@ const NuevaSolicitud = () => {
       }
       
       if (field === 'pct') {
-        const valNum = parseFloat(cleanedValue || value);
+        const valNum = parseFloat(cleanedValue || value).toFixed(2);
         if (valNum < 0) cleanedValue = '0';
       }
       if (field === 'mdesc') {
-        const valNum = parseFloat(cleanedValue);
+        const valNum = parseFloat(cleanedValue).toFixed(2);
         if (valNum < 0) cleanedValue = '0';
       }
       
       const updated = { ...s, [field]: value === '' ? '' : (cleanedValue || value) };
 
       if (['cantidad', 'precio_base', 'pct', 'psol', 'mdesc'].includes(field)) {
-        const cant = parseFloat(updated.cantidad) || 0;
-        const lpv = parseFloat(updated.precio_base) || 0;
+        const cant = parseFloat(updated.cantidad).toFixed(2) || 0;
+        const lpv = parseFloat(updated.precio_base).toFixed(2) || 0;
         
         if (field === 'pct' || (field === 'precio_base' && updated.lastEdited === 'pct')) {
           updated.lastEdited = 'pct';
-          const pct = parseFloat(updated.pct) || 0;
+          const pct = parseFloat(updated.pct).toFixed(2) || 0;
           if (lpv > 0) {
             const psol = lpv * (1 - pct / 100);
-            updated.psol = psol.toFixed(2);
-            updated.mdesc = (lpv - psol) * cant;
+            updated.psol = Number.parseFloat(psol).toFixed(2);
+            updated.mdesc = Number.parseFloat((lpv - psol) * cant).toFixed(2);
           } else {
             updated.mdesc = 0;
           }
         } else if (field === 'psol' || (field === 'precio_base' && updated.lastEdited === 'psol')) {
           updated.lastEdited = 'psol';
-          const psol = parseFloat(updated.psol) || 0;
+          const psol = parseFloat(updated.psol).toFixed(2) || 0;
           if (lpv > 0) {
             const pct = (1 - psol / lpv) * 100;
             updated.pct = pct.toFixed(2);
@@ -346,7 +346,7 @@ const NuevaSolicitud = () => {
           }
         } else if (field === 'mdesc' || (field === 'precio_base' && updated.lastEdited === 'mdesc')) {
           updated.lastEdited = 'mdesc';
-          const mdescTotal = parseFloat(updated.mdesc) || 0;
+          const mdescTotal = parseFloat(updated.mdesc).toFixed(2) || 0;
           if (lpv > 0 && cant > 0) {
             const mdescPorUnidad = mdescTotal / cant;
             const pct = (mdescPorUnidad / lpv) * 100;
@@ -366,7 +366,7 @@ const NuevaSolicitud = () => {
         } else if (field === 'cantidad') {
           // Si lastEdited era 'mdesc', mantener el monto total constante y recalcular porcentaje
           if (updated.lastEdited === 'mdesc') {
-            const mdescTotal = parseFloat(updated.mdesc) || 0;
+            const mdescTotal = parseFloat(updated.mdesc).toFixed(2) || 0;
             if (lpv > 0 && cant > 0) {
               const mdescPorUnidad = mdescTotal / cant;
               const pct = (mdescPorUnidad / lpv) * 100;
@@ -375,13 +375,13 @@ const NuevaSolicitud = () => {
               updated.psol = psol.toFixed(2);
             } else if (lpv > 0) {
               // Si cantidad es 0, mantener el porcentaje actual
-              const pct = parseFloat(updated.pct) || 0;
+              const pct = parseFloat(updated.pct).toFixed(2) || 0;
               updated.psol = (lpv * (1 - pct / 100)).toFixed(2);
               updated.mdesc = 0;
             }
           } else {
             // Recalcular mdesc basado en psol actual (comportamiento original)
-            const psol = parseFloat(updated.psol) || 0;
+            const psol = parseFloat(updated.psol).toFixed(2) || 0;
             if (lpv > 0) {
               updated.mdesc = (lpv - psol) * cant;
             }
@@ -835,19 +835,11 @@ const NuevaSolicitud = () => {
               </div>
               <div className="form-group">
                 <label>% Desc. Sol. *</label>
-                <input type="number" className="form-control" value={s.pct} onChange={e => updateSku(s.id, 'pct', e.target.value)} min="0" disabled={submitting} />
+                <input type="number" className="form-control" value={s.pct} onChange={e => updateSku(s.id, 'pct', e.target.value)} min="0" max={100} disabled={submitting} />
               </div>
               <div className="form-group">
                 <label>Monto Desc. ₡</label>
-                <input 
-                  type="number" 
-                  className="form-control" 
-                  style={{ background: '#f8f8f8' }} 
-                  value={s.mdesc === 0 || !s.mdesc ? '' : Number.parseFloat(s.mdesc).toFixed(2)} 
-                  onChange={e => updateSku(s.id, 'mdesc', e.target.value)} 
-                  min="0" 
-                  step="0.01" 
-                />
+                <input type="number" className="form-control" value={s.mdesc === 0 ? '' : s.mdesc} style={{ background: '#f8f8f8' }}  onChange={e => updateSku(s.id, 'mdesc', e.target.value)} min="0" step="0.01" />
               </div>
             </div>
 
