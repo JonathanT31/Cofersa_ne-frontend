@@ -392,6 +392,46 @@ const NuevaSolicitud = () => {
     }));
   };
 
+  const isBrandBudgetExceeded = (marca) => {
+    if (!marca) return false;
+    const mdescTotal = skus
+      .filter(s => s.marca === marca)
+      .reduce((sum, s) => sum + (parseFloat(s.mdesc) || 0), 0);
+    
+    if (mdescTotal < 0.01) return false;
+
+    const ppto = presupuestoDict[marca];
+    if (ppto === undefined || ppto === null || ppto <= 0) return true;
+    const gastado = gastoDict[marca] || 0;
+    return Math.round((gastado + mdescTotal) * 100) / 100 > Math.round(ppto * 100) / 100;
+  };
+
+  const getBrandBudgetWarning = (marca) => {
+    // Los usuarios con roles de compras, supervisor y admin no deben restringirse ni alertarse innecesariamente por falta de presupuesto
+    if (user?.role && user.role !== 'vendedor') return null;
+    if (!marca) return null;
+
+    // Calcular el descuento total solicitado en este formulario para esta marca
+    const mdescTotal = skus
+      .filter(s => s.marca === marca)
+      .reduce((sum, s) => sum + (parseFloat(s.mdesc) || 0), 0);
+
+    if (mdescTotal < 0.01) return null;
+
+    const ppto = presupuestoDict[marca];
+    if (ppto === undefined || ppto === null || ppto <= 0) {
+      return `⚠️ No hay presupuesto asignado para la marca ${marca}.`;
+    }
+
+    const gastado = gastoDict[marca] || 0;
+    if (Math.round((gastado + mdescTotal) * 100) / 100 > Math.round(ppto * 100) / 100) {
+      const disponible = Math.max(0, ppto - gastado);
+      return `⚠️ El descuento acumulado solicitado para la marca ${marca} (${formatCRC(mdescTotal)}) supera el presupuesto disponible (${formatCRC(disponible)}).`;
+    }
+
+    return null;
+  };
+
   const enviarSolicitud = async () => {
     const errors = [];
     if (!clienteCodigo.trim()) errors.push('Código de cliente es requerido.');
@@ -404,35 +444,6 @@ const NuevaSolicitud = () => {
       if (!s.codigo_sku.trim()) errors.push(`Línea #${s.id}: Código SKU requerido.`);
       if (parseFloat(s.cantidad) <= 0) errors.push(`Línea #${s.id}: Cantidad debe ser mayor a 0.`);
       if (parseFloat(s.precio_base) <= 0) errors.push(`Línea #${s.id}: Precio LPV debe ser mayor a 0.`);
-    });
-
-    // Validar presupuesto
-    const nuevosGastos = {};
-    skus.forEach(s => {
-      if (s.marca) {
-        const descuentoLinea = Math.round((parseFloat(s.mdesc) || 0) * 100) / 100;
-        nuevosGastos[s.marca] = (nuevosGastos[s.marca] || 0) + descuentoLinea;
-      }
-    });
-
-    Object.entries(nuevosGastos).forEach(([marca, mdesc]) => {
-      // Forzar a que mdesc sea un número limpio y compararlo con un margen seguro (0.01)
-      if (mdesc >= 0.01) {
-        const ppto = presupuestoDict[marca];
-        
-        // Si es undefined, null o menor/igual a 0, significa que no tiene presupuesto asignado
-        if (ppto === undefined || ppto === null || ppto <= 0) {
-          errors.push(`No hay presupuesto asignado para la marca ${marca}. Solo se permiten descuentos de 0%.`);
-        } else {
-          const gastado = gastoDict[marca] || 0;
-          // Redondeamos la comparación para evitar alertas fantasma por decimales
-          if (Math.round((gastado + mdesc) * 100) / 100 > Math.round(ppto * 100) / 100) {
-            const disponible = Math.max(0, ppto - gastado);
-            errors.push(`El descuento solicitado para la marca ${marca} (${formatCRC(mdesc)}) supera el presupuesto disponible (${formatCRC(disponible)}).`);
-          }
-        }
-      }
-      // Si mdesc es 0 (o menor a 0.01), se ignora por completo la validación de presupuesto de descuento.
     });
 
     setFormErrors(errors);
@@ -467,8 +478,7 @@ const NuevaSolicitud = () => {
         const result = await response.json();
         if (!response.ok) throw new Error(result.detail || 'Error al crear solicitud');
 
-        alert("Solicitud creada con éxito.");
-        navigate('/mis-solicitudes');
+        navigate('/mis-solicitudes', { state: { emailSent: true } });
       } catch (err) {
         console.error('Error submitting:', err);
         setFormErrors([err.message]);
@@ -860,29 +870,93 @@ const NuevaSolicitud = () => {
 
                 {(() => {
                   const pct = parseFloat(s.pct) || 0;
+                  const role = user?.role;
+                  const regla = reglasDict[s.marca];
                   
-                  if (pct <= reglasDict[s.marca].limite_vendedor) {
+                  if (role === 'compras' || role === 'admin') {
                     return (
                       <div style={{ backgroundColor: '#d4edda', color: '#155724', padding: '8px 12px', borderRadius: '4px', fontSize: '13px', border: '1px solid #c3e6cb' }}>
-                        ✓ Esta solicitud puede autoaprobarse por el vendedor.
+                        ✓ Esta solicitud se autoaprobará automáticamente por compras/admin.
                       </div>
                     );
-                  } else if (pct <= reglasDict[s.marca].limite_supervisor) {
-                    return (
-                      <div style={{ backgroundColor: '#fff3cd', color: '#856404', padding: '8px 12px', borderRadius: '4px', fontSize: '13px', border: '1px solid #ffeeba' }}>
-                        ⚠️ Esta solicitud requiere la aprobación del SUPERVISOR.
-                      </div>
-                    );
+                  }
+                  
+                  if (role === 'supervisor') {
+                    if (pct <= regla.limite_supervisor) {
+                      return (
+                        <div style={{ backgroundColor: '#d4edda', color: '#155724', padding: '8px 12px', borderRadius: '4px', fontSize: '13px', border: '1px solid #c3e6cb' }}>
+                          ✓ Esta solicitud puede autoaprobarse por el supervisor.
+                        </div>
+                      );
+                    } else {
+                      return (
+                        <div style={{ backgroundColor: '#f8d7da', color: '#721c24', padding: '8px 12px', borderRadius: '4px', fontSize: '13px', border: '1px solid #f5c6cb' }}>
+                          ❌ Esta solicitud requiere la aprobación de COMPRAS.
+                        </div>
+                      );
+                    }
+                  }
+                  
+                  // Rol Vendedor / otros
+                  const budgetExceeded = isBrandBudgetExceeded(s.marca);
+                  if (budgetExceeded) {
+                    if (pct <= regla.limite_supervisor) {
+                      return (
+                        <div style={{ backgroundColor: '#fff3cd', color: '#856404', padding: '8px 12px', borderRadius: '4px', fontSize: '13px', border: '1px solid #ffeeba' }}>
+                          ⚠️ Por falta/exceso de presupuesto, esta solicitud requiere la aprobación del SUPERVISOR.
+                        </div>
+                      );
+                    } else {
+                      return (
+                        <div style={{ backgroundColor: '#f8d7da', color: '#721c24', padding: '8px 12px', borderRadius: '4px', fontSize: '13px', border: '1px solid #f5c6cb' }}>
+                          ❌ Esta solicitud requiere la aprobación de COMPRAS.
+                        </div>
+                      );
+                    }
                   } else {
-                    return (
-                      <div style={{ backgroundColor: '#f8d7da', color: '#721c24', padding: '8px 12px', borderRadius: '4px', fontSize: '13px', border: '1px solid #f5c6cb' }}>
-                        ❌ Esta solicitud requiere la aprobación de COMPRAS.
-                      </div>
-                    );
+                    if (pct <= regla.limite_vendedor) {
+                      return (
+                        <div style={{ backgroundColor: '#d4edda', color: '#155724', padding: '8px 12px', borderRadius: '4px', fontSize: '13px', border: '1px solid #c3e6cb' }}>
+                          ✓ Esta solicitud puede autoaprobarse por el vendedor.
+                        </div>
+                      );
+                    } else if (pct <= regla.limite_supervisor) {
+                      return (
+                        <div style={{ backgroundColor: '#fff3cd', color: '#856404', padding: '8px 12px', borderRadius: '4px', fontSize: '13px', border: '1px solid #ffeeba' }}>
+                          ⚠️ Esta solicitud requiere la aprobación del SUPERVISOR.
+                        </div>
+                      );
+                    } else {
+                      return (
+                        <div style={{ backgroundColor: '#f8d7da', color: '#721c24', padding: '8px 12px', borderRadius: '4px', fontSize: '13px', border: '1px solid #f5c6cb' }}>
+                          ❌ Esta solicitud requiere la aprobación de COMPRAS.
+                        </div>
+                      );
+                    }
                   }
                 })()}
               </div>
             )}
+
+            {/* Advertencia de Presupuesto (Inline e Interactiva) */}
+            {(() => {
+              const warningMsg = getBrandBudgetWarning(s.marca);
+              if (!warningMsg) return null;
+              return (
+                <div style={{ 
+                  marginTop: '10px', 
+                  backgroundColor: '#fff3cd', 
+                  color: '#856404', 
+                  padding: '8px 12px', 
+                  borderRadius: '4px', 
+                  fontSize: '13px', 
+                  border: '1px solid #ffeeba',
+                  fontWeight: '500'
+                }}>
+                  {warningMsg}
+                </div>
+              );
+            })()}
           </div>
         ))}
 

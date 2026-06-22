@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useLocation } from 'react-router-dom';
 import Layout from '../../components/layout/Layout';
 import { supabase } from '../../api/supabaseClient';
 import { useAuth } from '../../context/AuthContext';
@@ -45,8 +45,20 @@ const EstadoBadge = ({ estado }) => {
 
 const MisSolicitudes = () => {
   const { user } = useAuth();
+  const location = useLocation();
   const [solicitudes, setSolicitudes] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [showAlert, setShowAlert] = useState(false);
+
+  useEffect(() => {
+    if (location.state?.emailSent) {
+      setShowAlert(true);
+      const timer = setTimeout(() => {
+        setShowAlert(false);
+      }, 6000);
+      return () => clearTimeout(timer);
+    }
+  }, [location]);
 
   useEffect(() => {
     if (user) fetchSolicitudes();
@@ -72,6 +84,40 @@ const MisSolicitudes = () => {
 
   return (
     <Layout title="Mis Solicitudes" active="mis">
+      {showAlert && (
+        <div style={{
+          padding: '12px 20px',
+          backgroundColor: '#e0f2fe',
+          color: '#0369a1',
+          borderLeft: '4px solid #0284c7',
+          borderRadius: '6px',
+          marginBottom: '16px',
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+          boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)',
+          animation: 'fadeIn 0.3s ease'
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <span>📧</span>
+            <span><strong>¡Solicitud enviada con éxito!</strong> Se ha realizado un envío de correo de notificación.</span>
+          </div>
+          <button 
+            onClick={() => setShowAlert(false)}
+            style={{
+              background: 'transparent',
+              border: 'none',
+              color: '#0369a1',
+              cursor: 'pointer',
+              fontSize: '16px',
+              fontWeight: 'bold',
+              padding: '0 4px'
+            }}
+          >
+            ✕
+          </button>
+        </div>
+      )}
       <h1>Mis Solicitudes</h1>
       <div className="card">
         <div className="table-responsive">

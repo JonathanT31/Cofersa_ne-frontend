@@ -217,61 +217,62 @@ async def crear_solicitud(data: Dict[str, Any]):
     reglas_res = supabase.table("reglas").select("*").execute()
     reglas = {r['marca']: r for r in reglas_res.data}
 
-    # 1.5. Validar Presupuesto
-    username = user.get("username", "")
-    if not username:
-        raise HTTPException(status_code=400, detail="El vendedor no tiene un nombre de usuario configurado.")
-
-    # Agrupar nuevo gasto propuesto por marca
-    nuevos_gastos = {}
-    for sku in skus:
-        m = sku.get("marca")
-        mdesc = float(sku.get("monto_descuento") or 0)
-        nuevos_gastos[m] = round(nuevos_gastos.get(m, 0.0) + mdesc, 2)
-
-    # Consultar presupuesto por marca para este asesor
-    ppto_res = supabase.table("presupuesto").select("marca, ppto_mensual").eq("asesor", username).execute()
-    ppto_dict = {p["marca"]: float(p["ppto_mensual"] or 0) for p in ppto_res.data} if ppto_res.data else {}
-
-    # Consultar gasto acumulado del mes actual (excluyendo rechazadas)
-    now = datetime.now()
-    month_start = datetime(now.year, now.month, 1).isoformat()
+    # 1.5. Validar Presupuesto (Advertencia/informacional. No bloquear creación de solicitudes)
+    role = user.get("role", "vendedor")
+    presupuesto_excedido = False
     
-    sols_res = supabase.table("solicitudes").select("id").eq("vendedor_id", vendedor_id).gte("created_at", month_start).neq("estado", "rechazada").execute()
-    sol_ids = [s["id"] for s in sols_res.data] if sols_res.data else []
-    
-    gasto_dict = {}
-    if sol_ids:
-        skus_res = supabase.table("solicitud_skus").select("marca, monto_aprobado, monto_descuento, sku_estado").in_("solicitud_id", sol_ids).execute()
-        if skus_res.data:
-            for sk in skus_res.data:
-                if sk.get("sku_estado") == "rechazado":
-                    continue
-                val = sk.get("monto_aprobado")
-                if val is None or val == "":
-                    val = sk.get("monto_descuento")
-                val = float(val or 0)
-                m = sk.get("marca", "")
-                gasto_dict[m] = gasto_dict.get(m, 0.0) + val
+    if role == 'vendedor':
+        username = user.get("username", "")
+        if username:
+            # Agrupar nuevo gasto propuesto por marca
+            nuevos_gastos = {}
+            for sku in skus:
+                m = sku.get("marca")
+                mdesc = float(sku.get("monto_descuento") or 0)
+                nuevos_gastos[m] = round(nuevos_gastos.get(m, 0.0) + mdesc, 2)
 
-    # Validar que no se pase del presupuesto asignado o que tenga presupuesto
-    for marca, nuevo_monto in nuevos_gastos.items():
-        # Usar un umbral de 0.01 para ignorar residuos de punto flotante del frontend
-        if nuevo_monto >= 0.01:
-            ppto_lim = ppto_dict.get(marca)
-            
-            # Si ppto_lim es None (no existe la fila) o <= 0, bloqueamos
-            if ppto_lim is None or ppto_lim <= 0:
-                raise HTTPException(status_code=400, detail=f"No hay presupuesto asignado para la marca {marca}. Solo se permiten descuentos de 0%.")
-            
-            gasto_act = gasto_dict.get(marca, 0.0)
-            # Redondear ambas partes a 2 decimales para evitar que 0.0000001 de diferencia lance error
-            if round(gasto_act + nuevo_monto, 2) > round(ppto_lim, 2):
-                disponible = max(0.0, ppto_lim - gasto_act)
-                raise HTTPException(status_code=400, detail=f"El descuento solicitado para la marca {marca} (₡{nuevo_monto:,.2f}) supera el presupuesto disponible (₡{disponible:,.2f}).")
+            # Consultar presupuesto por marca para este asesor
+            try:
+                ppto_res = supabase.table("presupuesto").select("marca, ppto_mensual").eq("asesor", username).execute()
+                ppto_dict = {p["marca"]: float(p["ppto_mensual"] or 0) for p in ppto_res.data} if ppto_res.data else {}
 
-    # 2. Ruteo de 3 niveles (Lógica oficial)
-    aprobador_nivel = "vendedor"
+                # Consultar gasto acumulado del mes actual (excluyendo rechazadas)
+                now = datetime.now()
+                month_start = datetime(now.year, now.month, 1).isoformat()
+                
+                sols_res = supabase.table("solicitudes").select("id").eq("vendedor_id", vendedor_id).gte("created_at", month_start).neq("estado", "rechazada").execute()
+                sol_ids = [s["id"] for s in sols_res.data] if sols_res.data else []
+                
+                gasto_dict = {}
+                if sol_ids:
+                    skus_res = supabase.table("solicitud_skus").select("marca, monto_aprobado, monto_descuento, sku_estado").in_("solicitud_id", sol_ids).execute()
+                    if skus_res.data:
+                        for sk in skus_res.data:
+                            if sk.get("sku_estado") == "rechazado":
+                                continue
+                            val = sk.get("monto_aprobado")
+                            if val is None or val == "":
+                                val = sk.get("monto_descuento")
+                            val = float(val or 0)
+                            m = sk.get("marca", "")
+                            gasto_dict[m] = gasto_dict.get(m, 0.0) + val
+                
+                # Determinar si el presupuesto es insuficiente o no existe para alguna marca con descuento
+                for marca, nuevo_monto in nuevos_gastos.items():
+                    if nuevo_monto >= 0.01:
+                        ppto_lim = ppto_dict.get(marca)
+                        if ppto_lim is None or ppto_lim <= 0:
+                            presupuesto_excedido = True
+                            break
+                        gasto_act = gasto_dict.get(marca, 0.0)
+                        if round(gasto_act + nuevo_monto, 2) > round(ppto_lim, 2):
+                            presupuesto_excedido = True
+                            break
+            except Exception as p_err:
+                print(f"Error al verificar presupuesto en backend: {p_err}")
+
+    # 2. Ruteo de 3 niveles (Lógica oficial con soporte de roles)
+    required_level = "vendedor"
     max_pcts = {}
     for sku in skus:
         m, p = sku.get("marca"), float(sku.get("porcentaje_descuento_sol") or 0)
@@ -282,14 +283,52 @@ async def crear_solicitud(data: Dict[str, Any]):
         if regla:
             lv = float(regla.get('limite_vendedor') or regla.get('limite_supervisor') or 0)
             ls = float(regla.get('limite_supervisor') or 0)
-            if pct > ls: aprobador_nivel = "compras"; break
-            elif pct > lv: aprobador_nivel = "supervisor"
+            if pct > ls:
+                required_level = "compras"
+                break
+            elif pct > lv:
+                required_level = "supervisor"
 
-    # 3. Estado y Aprobador
+    # Si el presupuesto está excedido o no asignado, el vendedor no puede autoaprobar. Pasa a supervisor
+    if role == 'vendedor' and presupuesto_excedido and required_level == 'vendedor':
+        required_level = 'supervisor'
+
+    # 3. Estado y Aprobador según el Rol del Creador
     estado = "pendiente"
-    aprobador_id = user.get("supervisor_id") if aprobador_nivel == "supervisor" else None
-    if aprobador_nivel == "vendedor": 
-        estado = "aprobada" # Auto-aprobación si está bajo límite vendedor
+    aprobador_nivel = required_level
+    aprobador_id = None
+
+    if role in ('compras', 'admin', 'gerente_ventas'):
+        # Auto-aprobación automática para roles administrativos
+        estado = "aprobada"
+        aprobador_nivel = "compras"
+    elif role == 'supervisor':
+        if required_level == 'compras':
+            # Requiere aprobación de compras
+            estado = "pendiente"
+            aprobador_nivel = "compras"
+            try:
+                compras_res = supabase.table("profiles").select("*").eq("role", "compras").eq("status", "activo").limit(1).execute()
+                if compras_res.data:
+                    aprobador_id = compras_res.data[0]["id"]
+            except Exception as e:
+                print(f"No se pudo asignar aprobador de compras: {e}")
+        else:
+            # Se autoaprueba bajo el límite de supervisor
+            estado = "aprobada"
+            aprobador_nivel = "supervisor"
+    else:
+        # Rol vendedor u otros
+        if required_level == "vendedor":
+            estado = "aprobada"
+            aprobador_nivel = "vendedor"
+        elif required_level == "supervisor":
+            estado = "pendiente"
+            aprobador_nivel = "supervisor"
+            aprobador_id = user.get("supervisor_id")
+        else:
+            estado = "pendiente"
+            aprobador_nivel = "compras"
     
     folio = await generate_folio()
     monto_total = round(sum(float(s.get("monto_descuento") or 0) for s in skus), 2)
@@ -717,4 +756,4 @@ async def import_presupuesto(file: UploadFile = File(...)):
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000, reload=True)
+    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
