@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { supabase } from '../api/supabaseClient';
+import { crearNotificacion, TIPOS_NOTIFICACION } from '../api/notificacionesService';
 
 const AuthContext = createContext();
 
@@ -185,9 +186,18 @@ export const AuthProvider = ({ children }) => {
       password,
     });
     if (error) throw error;
-    
+
     // Cargamos el perfil. Si falla, el catch interno de fetchProfile nos salvará.
     await fetchProfile(data.user);
+
+    // Registrar alerta de inicio de sesión (visible en la pestaña Notificaciones).
+    crearNotificacion({
+      userId: data.user.id,
+      tipo: TIPOS_NOTIFICACION.LOGIN_ALERTA,
+      titulo: 'Inicio de sesión',
+      mensaje: `Se inició sesión en tu cuenta (${email}) el ${new Date().toLocaleString()}.`,
+    });
+
     return data;
   };
 

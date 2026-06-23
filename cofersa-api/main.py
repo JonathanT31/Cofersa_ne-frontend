@@ -68,6 +68,22 @@ def send_n8n_webhook(event_type: str, solicitud: Dict[str, Any], skus: List[Dict
         email_destinatario = (extra_info or {}).get("email_destinatario")
         extra_info_formateada["url_solicitud"] = build_login_link(email_destinatario, destino)
 
+    # Guardar una notificación in-app para el vendedor (visible en la pestaña Notificaciones).
+    notif_map = {
+        "creada":    ("solicitud_enviada",   "Solicitud enviada",   "Tu solicitud {ref} fue enviada para aprobación."),
+        "aprobada":  ("solicitud_aprobada",  "Solicitud aprobada",  "Tu solicitud {ref} fue aprobada."),
+        "rechazada": ("solicitud_cancelada", "Solicitud cancelada", "Tu solicitud {ref} fue cancelada/rechazada."),
+    }
+    if event_type in notif_map:
+        vendedor = (extra_info or {}).get("vendedor") or {}
+        vendedor_id = vendedor.get("id")
+        if vendedor_id:
+            ref = solicitud.get("folio") or (f"#{sol_id}" if sol_id else "")
+            url_in_app = f"/solicitud/{sol_id}" if sol_id else None
+            tipo, titulo, mensaje = notif_map[event_type]
+            crear_notificacion(vendedor_id, tipo, titulo, mensaje.format(ref=ref).strip(),
+                               "solicitud", sol_id, url_in_app)
+
     payload = {
         "event": event_type,  # "creada", "aprobada", o "rechazada"
         "solicitud": solicitud_formateada,
@@ -188,6 +204,27 @@ def add_business_hours(start_dt, hours):
             while current.weekday() >= 5:
                 current = current + timedelta(days=1)
     return current
+
+def crear_notificacion(user_id: str, tipo: str, titulo: str, mensaje: str = None,
+                       entity_type: str = None, entity_id: int = None, url: str = None):
+    """Guarda una notificación in-app que el destinatario verá en la pestaña Notificaciones.
+    Usa el mismo cliente (esquema negociaciones_especiales) que el resto de la app."""
+    if not user_id:
+        return
+    try:
+        supabase.table("notificaciones").insert({
+            "user_id": user_id,
+            "tipo": tipo,
+            "titulo": titulo,
+            "mensaje": mensaje,
+            "entity_type": entity_type,
+            "entity_id": entity_id,
+            "url": url,
+            "leida": False,
+            "created_at": datetime.now().isoformat()
+        }).execute()
+    except Exception as e:
+        print(f"Error guardando notificación: {e}")
 
 async def log_audit(user_id: str, username: str, action: str, entity_type: str = None, entity_id: int = None, details: str = None):
     """Registra una acción en la tabla audit_log."""

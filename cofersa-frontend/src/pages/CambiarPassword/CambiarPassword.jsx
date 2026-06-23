@@ -1,14 +1,19 @@
 import React, { useState } from 'react';
 import { Link } from 'react-router-dom';
 import Layout from '../../components/layout/Layout';
+import { useAuth } from '../../context/AuthContext';
+import { supabase } from '../../api/supabaseClient';
+import { crearNotificacion, TIPOS_NOTIFICACION } from '../../api/notificacionesService';
 
 const CambiarPassword = () => {
+  const { user } = useAuth();
   const [actual, setActual] = useState('');
   const [nueva, setNueva] = useState('');
   const [confirm, setConfirm] = useState('');
   const [msg, setMsg] = useState(null);
+  const [loading, setLoading] = useState(false);
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
     if (!actual || !nueva || !confirm) {
       setMsg({ type: 'danger', text: 'Todos los campos son obligatorios.' });
@@ -23,11 +28,41 @@ const CambiarPassword = () => {
       return;
     }
 
-    // Simular éxito
-    setMsg({ type: 'success', text: 'Contraseña actualizada correctamente.' });
-    setActual('');
-    setNueva('');
-    setConfirm('');
+    setLoading(true);
+    setMsg(null);
+    try {
+      // 1. Verificar la contraseña actual reautenticando.
+      const { error: signInError } = await supabase.auth.signInWithPassword({
+        email: user.email,
+        password: actual,
+      });
+      if (signInError) {
+        setMsg({ type: 'danger', text: 'La contraseña actual no es correcta.' });
+        return;
+      }
+
+      // 2. Actualizar a la nueva contraseña.
+      const { error: updateError } = await supabase.auth.updateUser({ password: nueva });
+      if (updateError) throw updateError;
+
+      // 3. Registrar la notificación (visible en la pestaña Notificaciones).
+      crearNotificacion({
+        userId: user.id,
+        tipo: TIPOS_NOTIFICACION.CAMBIO_PASSWORD,
+        titulo: 'Cambio de contraseña',
+        mensaje: `La contraseña de tu cuenta fue actualizada el ${new Date().toLocaleString()}.`,
+      });
+
+      setMsg({ type: 'success', text: 'Contraseña actualizada correctamente.' });
+      setActual('');
+      setNueva('');
+      setConfirm('');
+    } catch (err) {
+      console.error('Error al cambiar contraseña:', err);
+      setMsg({ type: 'danger', text: err.message || 'No se pudo actualizar la contraseña.' });
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
@@ -76,7 +111,9 @@ const CambiarPassword = () => {
           )}
           
           <div className="actions-bar">
-            <button type="submit" className="btn btn-primary">Guardar Contraseña</button>
+            <button type="submit" className="btn btn-primary" disabled={loading}>
+              {loading ? 'Guardando...' : 'Guardar Contraseña'}
+            </button>
             <Link to="/" className="btn btn-outline">Cancelar</Link>
           </div>
         </form>

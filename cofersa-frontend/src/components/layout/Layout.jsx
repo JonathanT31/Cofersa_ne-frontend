@@ -34,6 +34,7 @@ const Layout = ({ children, title, active }) => {
     navItems.push({ href: '/dashboard', label: 'Dashboard', key: 'dashboard' });
   }
   
+  navItems.push({ href: '/notificaciones', label: 'Notificaciones', key: 'notificaciones' });
   navItems.push({ href: '/exportar', label: 'Exportar', key: 'exportar' });
 
   // Reglas y Presupuesto para Admin y Compras
