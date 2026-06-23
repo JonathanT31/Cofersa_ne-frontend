@@ -1,0 +1,26 @@
+{
+  "version": 2,
+  "builds": [
+    {
+      "src": "cofersa-api/main.py",
+      "use": "@vercel/python"
+    },
+    {
+      "src": "cofersa-frontend/package.json",
+      "use": "@vercel/static-build",
+      "config": {
+        "distDir": "dist"
+      }
+    }
+  ],
+  "routes": [
+    {
+      "src": "/api/(.*)",
+      "dest": "cofersa-api/main.py"
+    },
+    {
+      "src": "/(.*)",
+      "dest": "cofersa-frontend/$1"
+    }
+  ]
+}
