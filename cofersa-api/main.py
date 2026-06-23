@@ -75,14 +75,27 @@ def send_n8n_webhook(event_type: str, solicitud: Dict[str, Any], skus: List[Dict
         "rechazada": ("solicitud_cancelada", "Solicitud cancelada", "Tu solicitud {ref} fue cancelada/rechazada."),
     }
     if event_type in notif_map:
+        ref = solicitud.get("folio") or (f"#{sol_id}" if sol_id else "")
+        url_in_app = f"/solicitud/{sol_id}" if sol_id else None
+
         vendedor = (extra_info or {}).get("vendedor") or {}
         vendedor_id = vendedor.get("id")
         if vendedor_id:
-            ref = solicitud.get("folio") or (f"#{sol_id}" if sol_id else "")
-            url_in_app = f"/solicitud/{sol_id}" if sol_id else None
             tipo, titulo, mensaje = notif_map[event_type]
             crear_notificacion(vendedor_id, tipo, titulo, mensaje.format(ref=ref).strip(),
                                "solicitud", sol_id, url_in_app)
+
+        # En una solicitud nueva, avisar también al aprobador que tiene algo pendiente.
+        if event_type == "creada":
+            aprobador = (extra_info or {}).get("aprobador") or {}
+            aprobador_id = aprobador.get("id")
+            if aprobador_id and aprobador_id != vendedor_id:
+                vend_nombre = f"{vendedor.get('nombre', '')} {vendedor.get('apellido', '')}".strip() or "un vendedor"
+                crear_notificacion(
+                    aprobador_id, "solicitud_enviada", "Solicitud por aprobar",
+                    f"Tienes la solicitud {ref} de {vend_nombre} pendiente de aprobación.",
+                    "solicitud", sol_id, url_in_app
+                )
 
     payload = {
         "event": event_type,  # "creada", "aprobada", o "rechazada"
