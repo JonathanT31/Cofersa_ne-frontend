@@ -12,7 +12,13 @@ from dotenv import load_dotenv
 
 # Import services
 from services.email_service import send_email, build_solicitud_email
-from utils.xlsx_reader import import_reglas_from_xlsx, import_presupuesto_from_xlsx
+from fastapi.responses import Response
+from utils.xlsx_reader import (
+    import_reglas_from_xlsx,
+    import_presupuesto_from_xlsx,
+    generate_template_reglas,
+    generate_template_presupuesto,
+)
 
 load_dotenv()
 
@@ -821,6 +827,26 @@ async def procesar_solicitud(data: Dict[str, Any]):
     })
 
     return {"status": "success", "message": "Solicitud aprobada con éxito", "folio": folio}
+
+@app.get("/api/admin/template-reglas")
+def download_template_reglas():
+    """Descarga la plantilla XLSX para importar reglas de aprobación."""
+    xlsx_bytes = generate_template_reglas()
+    return Response(
+        content=xlsx_bytes,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": "attachment; filename=plantilla_reglas.xlsx"}
+    )
+
+@app.get("/api/admin/template-presupuesto")
+def download_template_presupuesto():
+    """Descarga la plantilla XLSX para importar presupuesto mensual."""
+    xlsx_bytes = generate_template_presupuesto()
+    return Response(
+        content=xlsx_bytes,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": "attachment; filename=plantilla_presupuesto.xlsx"}
+    )
 
 @app.post("/api/admin/import-reglas")
 async def import_reglas(file: UploadFile = File(...)):

@@ -5,6 +5,160 @@ import io
 import re
 from typing import List, Dict, Any
 
+
+# ---------------------------------------------------------------------------
+# XLSX WRITER (sin dependencias externas)
+# ---------------------------------------------------------------------------
+
+def _escape_xml(text: str) -> str:
+    """Escape special XML characters in cell values."""
+    return (
+        str(text)
+        .replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+        .replace('"', "&quot;")
+        .replace("'", "&apos;")
+    )
+
+
+def generate_xlsx(headers: List[str], rows: List[List[Any]]) -> bytes:
+    """
+    Generate a minimal valid .xlsx file from headers and data rows.
+    Returns the raw bytes of the file (ready to send as HTTP response).
+    Uses only Python stdlib – no openpyxl / xlsxwriter needed.
+    """
+    # ---- 1. Build shared strings ----------------------------------------
+    # Collect all unique string values (headers + cell values that are strings)
+    all_strings: List[str] = []
+    seen: dict = {}
+
+    def get_ss_idx(val: str) -> int:
+        if val not in seen:
+            seen[val] = len(all_strings)
+            all_strings.append(val)
+        return seen[val]
+
+    # Pre-register headers
+    for h in headers:
+        get_ss_idx(str(h))
+
+    # Pre-register string cells in data rows
+    for row in rows:
+        for cell in row:
+            if not isinstance(cell, (int, float)):
+                get_ss_idx(str(cell))
+
+    # ---- 2. Build worksheet XML -----------------------------------------
+    COL_LETTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+
+    def col_letter(idx: int) -> str:
+        result = ""
+        idx += 1
+        while idx:
+            idx, remainder = divmod(idx - 1, 26)
+            result = COL_LETTERS[remainder] + result
+        return result
+
+    sheet_rows_xml = []
+    all_data_rows = [headers] + rows
+    for r_idx, row_data in enumerate(all_data_rows, start=1):
+        cells_xml = []
+        for c_idx, cell in enumerate(row_data):
+            col = col_letter(c_idx)
+            ref = f"{col}{r_idx}"
+            if isinstance(cell, (int, float)):
+                cells_xml.append(f'<c r="{ref}"><v>{cell}</v></c>')
+            else:
+                ss_idx = get_ss_idx(str(cell))
+                cells_xml.append(f'<c r="{ref}" t="s"><v>{ss_idx}</v></c>')
+        sheet_rows_xml.append(f'<row r="{r_idx}">{"".join(cells_xml)}</row>')
+
+    sheet_xml = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
+        "<sheetData>"
+        + "".join(sheet_rows_xml)
+        + "</sheetData></worksheet>"
+    )
+
+    # ---- 3. Build shared strings XML ------------------------------------
+    si_entries = "".join(
+        f"<si><t>{_escape_xml(s)}</t></si>" for s in all_strings
+    )
+    shared_strings_xml = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        f'<sst xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"'
+        f' count="{len(all_strings)}" uniqueCount="{len(all_strings)}">'
+        + si_entries
+        + "</sst>"
+    )
+
+    # ---- 4. Boilerplate XLSX files --------------------------------------
+    content_types_xml = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
+        '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>'
+        '<Default Extension="xml" ContentType="application/xml"/>'
+        '<Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>'
+        '<Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>'
+        '<Override PartName="/xl/sharedStrings.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sharedStrings+xml"/>'
+        "</Types>"
+    )
+
+    rels_xml = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+        '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/>'
+        "</Relationships>"
+    )
+
+    workbook_xml = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"'
+        ' xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">'
+        "<sheets>"
+        '<sheet name="Plantilla" sheetId="1" r:id="rId1"/>'
+        "</sheets></workbook>"
+    )
+
+    workbook_rels_xml = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+        '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/>'
+        '<Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/sharedStrings" Target="sharedStrings.xml"/>'
+        "</Relationships>"
+    )
+
+    # ---- 5. Pack into ZIP (XLSX format) ---------------------------------
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("[Content_Types].xml", content_types_xml)
+        zf.writestr("_rels/.rels", rels_xml)
+        zf.writestr("xl/workbook.xml", workbook_xml)
+        zf.writestr("xl/_rels/workbook.xml.rels", workbook_rels_xml)
+        zf.writestr("xl/worksheets/sheet1.xml", sheet_xml)
+        zf.writestr("xl/sharedStrings.xml", shared_strings_xml)
+    return buf.getvalue()
+
+
+def generate_template_reglas() -> bytes:
+    """Returns bytes of a .xlsx template for the 'reglas' import."""
+    headers = ["Marca", "Clasificacion", "Limite_Vendedor", "Limite_Supervisor", "Limite_Compras"]
+    example_rows = [
+        ["EJEMPLO_MARCA", "1 Alto", 3.0, 5.0, 5.01],
+    ]
+    return generate_xlsx(headers, example_rows)
+
+
+def generate_template_presupuesto() -> bytes:
+    """Returns bytes of a .xlsx template for the 'presupuesto' import."""
+    headers = ["Supervisor", "Asesor", "Marca", "Ppto_Mensual"]
+    example_rows = [
+        ["supervisor.ejemplo", "asesor.ejemplo", "EJEMPLO_MARCA", 500000],
+    ]
+    return generate_xlsx(headers, example_rows)
+
 def read_xlsx(filepath) -> List[List[Any]]:
     """Parse xlsx into list of lists without external dependencies."""
     try:
