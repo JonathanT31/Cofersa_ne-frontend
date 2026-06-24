@@ -20,7 +20,7 @@ const SolicitarReset = () => {
     try {
       // 1. Buscar al usuario en profiles
       const { data: user, error: userError } = await supabase
-        .table('profiles')
+        .from('profiles')
         .select('id')
         .eq('username', trimmedUser)
         .single();
@@ -32,7 +32,7 @@ const SolicitarReset = () => {
 
       // 2. Insertar solicitud de reseteo
       const { error: resetError } = await supabase
-        .table('password_reset_requests')
+        .from('password_reset_requests')
         .insert({
           user_id: user.id,
           estado: 'pendiente'

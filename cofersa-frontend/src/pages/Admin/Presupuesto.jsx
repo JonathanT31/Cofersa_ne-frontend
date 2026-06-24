@@ -171,6 +171,17 @@ const Presupuesto = () => {
     }
   };
 
+  const handleDownloadTemplate = () => {
+    const url = `${import.meta.env.VITE_API_URL || 'http://localhost:8000'}/api/admin/template-presupuesto`;
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = 'plantilla_presupuesto.xlsx';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
+
   const handleExportCSV = () => {
     if (presupuesto.length === 0) return;
     const headers = ['Supervisor', 'Asesor', 'Marca', 'Ppto Mensual'];
@@ -292,10 +303,18 @@ const Presupuesto = () => {
                 onChange={e => setFile(e.target.files[0])}
             />
             <button type="submit" className="btn btn-primary btn-sm" disabled={!file || importing}>
-                {importing ? 'Importando...' : 'Importar Excel/CSV'}
+                {importing ? 'Importando...' : 'Importar Excel'}
             </button>
           </form>
           
+          <button 
+            className="btn btn-outline btn-sm" 
+            onClick={handleDownloadTemplate}
+            title="Descarga la plantilla XLSX con el formato correcto para importar"
+            style={{ display: 'flex', alignItems: 'center', gap: '5px' }}
+          >
+            ⬇️ Plantilla
+          </button>
           <button className="btn btn-outline btn-sm" onClick={handleExportCSV}>Exportar CSV</button>
           <button className="btn btn-success btn-sm" onClick={handleAddRow} disabled={loading}>+ Agregar Fila</button>
           

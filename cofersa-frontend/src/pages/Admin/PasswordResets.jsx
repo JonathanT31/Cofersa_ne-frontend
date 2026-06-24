@@ -18,10 +18,10 @@ const PasswordResets = () => {
       setLoading(true);
       // Fetch with join to profiles
       const { data, error } = await supabase
-        .table('password_reset_requests')
+        .from('password_reset_requests')
         .select(`
           *,
-          profiles:user_id (username, full_name, email, role)
+          profiles:user_id (username, nombre, apellido, email, role)
         `)
         .order('requested_at', { ascending: false });
       
@@ -38,7 +38,7 @@ const PasswordResets = () => {
     const formatted = data.map(r => ({
       ...r,
       username: r.profiles?.username,
-      nombre_completo: r.profiles?.full_name,
+      nombre_completo: r.profiles ? `${r.profiles.nombre} ${r.profiles.apellido}`.trim() : '',
       email: r.profiles?.email,
       role: r.profiles?.role
     }));
@@ -48,7 +48,7 @@ const PasswordResets = () => {
   const handleApprove = async (id) => {
     try {
       const { error } = await supabase
-        .table('password_reset_requests')
+        .from('password_reset_requests')
         .update({
           estado: 'atendida',
           resolved_at: new Date().toISOString(),
@@ -70,7 +70,7 @@ const PasswordResets = () => {
     if (!window.confirm('¿Rechazar esta solicitud?')) return;
     try {
       const { error } = await supabase
-        .table('password_reset_requests')
+        .from('password_reset_requests')
         .update({
           estado: 'rechazada',
           resolved_at: new Date().toISOString(),
