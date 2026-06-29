@@ -38,8 +38,15 @@ const Reglas = () => {
       const formData = new FormData();
       formData.append('file', file);
 
+      // Obtener el token de la sesión activa de Supabase
+      const sessionRes = await supabase.auth.getSession();
+      const token = sessionRes.data.session?.access_token;
+
       const response = await fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:8000'}/api/admin/import-reglas`, {
         method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`
+        },
         body: formData,
       });
 

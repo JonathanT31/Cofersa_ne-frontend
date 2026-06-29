@@ -5,7 +5,7 @@ import re
 from datetime import datetime, timedelta
 from typing import List, Dict, Any, Optional
 
-from fastapi import FastAPI, HTTPException, Body, UploadFile, File
+from fastapi import FastAPI, HTTPException, Body, UploadFile, File, Header, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from supabase import create_client, Client, ClientOptions
 from dotenv import load_dotenv
@@ -152,11 +152,46 @@ SUPABASE_SERVICE_ROLE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
 supabase_admin: Optional[Client] = None
 if SUPABASE_SERVICE_ROLE_KEY:
     try:
-        supabase_admin = create_client(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
+        supabase_admin = create_client(
+            SUPABASE_URL,
+            SUPABASE_SERVICE_ROLE_KEY,
+            options=ClientOptions(schema="negociaciones_especiales")
+        )
     except Exception as e:
         print(f"No se pudo inicializar el cliente admin de Supabase: {e}")
         supabase_admin = None
 
+
+async def verify_admin_or_compras(authorization: Optional[str] = Header(None)) -> str:
+    """Verifica si el token Bearer pertenece a un usuario con rol de admin o compras.
+    Retorna el user_id si es válido."""
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Token de autorización faltante o inválido.")
+    
+    token = authorization.split(" ")[1]
+    try:
+        # Consultar el usuario correspondiente al JWT
+        user_res = supabase.auth.get_user(token)
+        if not user_res or not user_res.user:
+            raise Exception("Token inválido o expirado.")
+        
+        user_id = user_res.user.id
+        
+        # Consultar el rol en profiles usando el cliente administrativo para saltar RLS
+        client = supabase_admin if supabase_admin else supabase
+        profile_res = client.table("profiles").select("role").eq("id", user_id).single().execute()
+        if not profile_res.data:
+            raise Exception("Perfil no encontrado.")
+            
+        role = profile_res.data.get("role")
+        if role not in ("admin", "compras"):
+            raise HTTPException(status_code=403, detail="Acceso denegado: Se requiere rol de Admin o Compras.")
+            
+        return user_id
+    except HTTPException as http_ex:
+        raise http_ex
+    except Exception as e:
+        raise HTTPException(status_code=401, detail=f"No autorizado: {str(e)}")
 
 def build_login_link(email: Optional[str], redirect_to: str) -> str:
     """Devuelve un magic link de Supabase que loguea automáticamente al destinatario
@@ -231,7 +266,8 @@ def crear_notificacion(user_id: str, tipo: str, titulo: str, mensaje: str = None
     if not user_id:
         return
     try:
-        supabase.table("notificaciones").insert({
+        client = supabase_admin if supabase_admin else supabase
+        client.table("notificaciones").insert({
             "user_id": user_id,
             "tipo": tipo,
             "titulo": titulo,
@@ -248,7 +284,8 @@ def crear_notificacion(user_id: str, tipo: str, titulo: str, mensaje: str = None
 async def log_audit(user_id: str, username: str, action: str, entity_type: str = None, entity_id: int = None, details: str = None):
     """Registra una acción en la tabla audit_log."""
     try:
-        supabase.table("audit_log").insert({
+        client = supabase_admin if supabase_admin else supabase
+        client.table("audit_log").insert({
             "user_id": user_id,
             "username": username,
             "action": action,
@@ -828,6 +865,126 @@ async def procesar_solicitud(data: Dict[str, Any]):
 
     return {"status": "success", "message": "Solicitud aprobada con éxito", "folio": folio}
 
+@app.post("/api/admin/crear-usuario")
+async def admin_crear_usuario(data: Dict[str, Any]):
+    if not supabase_admin:
+        raise HTTPException(status_code=500, detail="El cliente administrativo de Supabase no está configurado.")
+
+    email = data.get("email")
+    password = data.get("password", "Cofersa123!")
+    username = data.get("username")
+    nombre = data.get("nombre")
+    apellido = data.get("apellido")
+    role = data.get("role", "vendedor")
+    supervisor_id = data.get("supervisor_id")
+    status = data.get("status", "activo")
+
+    if not email or not username or not nombre or not apellido:
+        raise HTTPException(status_code=400, detail="Faltan campos requeridos (email, username, nombre, apellido)")
+
+    clean_email = email.strip().lower()
+    clean_username = username.strip().lower()
+    clean_nombre = nombre.strip()
+    clean_apellido = apellido.strip()
+    
+    final_supervisor_id = supervisor_id if role == "vendedor" and supervisor_id else None
+
+    user_id = None
+    is_existing = False
+
+    try:
+        # 1. Intentar crear el usuario globalmente en Supabase Auth
+        auth_res = supabase_admin.auth.admin.create_user({
+            "email": clean_email,
+            "password": password,
+            "email_confirm": True,
+            "user_metadata": {
+                "username": clean_username,
+                "nombre": clean_nombre,
+                "apellido": clean_apellido,
+                "role": role
+            }
+        })
+        user_id = auth_res.user.id
+    except Exception as e:
+        err_msg = str(e)
+        if "user_already_exists" in err_msg or "already been registered" in err_msg or "422" in err_msg:
+            is_existing = True
+            try:
+                page = 1
+                per_page = 100
+                while True:
+                    users_list_res = supabase_admin.auth.admin.list_users(page=page, per_page=per_page)
+                    users = []
+                    if hasattr(users_list_res, "users"):
+                        users = users_list_res.users
+                    elif isinstance(users_list_res, list):
+                        users = users_list_res
+                    elif isinstance(users_list_res, dict):
+                        users = users_list_res.get("users", [])
+                    
+                    if not users:
+                        break
+                    
+                    for u in users:
+                        if u.email and u.email.lower() == clean_email:
+                            user_id = u.id
+                            break
+                    
+                    if user_id:
+                        break
+                    
+                    if len(users) < per_page:
+                        break
+                    
+                    page += 1
+            except Exception as list_err:
+                raise HTTPException(status_code=500, detail=f"Error al listar usuarios existentes: {str(list_err)}")
+            
+            if not user_id:
+                raise HTTPException(status_code=400, detail="El usuario ya existe globalmente pero no se pudo localizar en la autenticación.")
+        else:
+            raise HTTPException(status_code=400, detail=f"Error al crear el usuario en Supabase Auth: {err_msg}")
+
+    # 2. Insertar o actualizar el perfil en la tabla de profiles de negociaciones_especiales
+    try:
+        profile_data = {
+            "username": clean_username,
+            "nombre": clean_nombre,
+            "apellido": clean_apellido,
+            "email": clean_email,
+            "role": role,
+            "supervisor_id": final_supervisor_id,
+            "status": status
+        }
+        
+        check_res = supabase_admin.table("profiles").select("id").eq("id", user_id).execute()
+        
+        if check_res.data:
+            update_res = supabase_admin.table("profiles").update(profile_data).eq("id", user_id).execute()
+            if not update_res.data:
+                raise Exception("No se pudo actualizar el perfil existente.")
+            profile = update_res.data[0]
+            action = "profile_updated"
+        else:
+            insert_data = {"id": user_id}
+            insert_data.update(profile_data)
+            insert_res = supabase_admin.table("profiles").insert(insert_data).execute()
+            if not insert_res.data:
+                raise Exception("No se pudo crear el perfil local.")
+            profile = insert_res.data[0]
+            action = "profile_created"
+            
+        return {
+            "status": "success",
+            "action": action,
+            "user_id": user_id,
+            "is_existing_global": is_existing,
+            "profile": profile
+        }
+    except Exception as db_err:
+        raise HTTPException(status_code=500, detail=f"Error en la base de datos de perfiles: {str(db_err)}")
+
 @app.get("/api/admin/template-reglas")
 def download_template_reglas():
     """Descarga la plantilla XLSX para importar reglas de aprobación."""
@@ -849,23 +1006,25 @@ def download_template_presupuesto():
     )
 
 @app.post("/api/admin/import-reglas")
-async def import_reglas(file: UploadFile = File(...)):
+async def import_reglas(file: UploadFile = File(...), user_id: str = Depends(verify_admin_or_compras)):
     file_path = f"temp_{file.filename}"
     with open(file_path, "wb") as f: f.write(await file.read())
     reglas = import_reglas_from_xlsx(file_path)
     os.remove(file_path)
-    supabase.table("reglas").delete().neq("id", -1).execute()
-    supabase.table("reglas").insert(reglas).execute()
+    client = supabase_admin if supabase_admin else supabase
+    client.table("reglas").delete().neq("id", -1).execute()
+    client.table("reglas").insert(reglas).execute()
     return {"status": "success", "count": len(reglas)}
 
 @app.post("/api/admin/import-presupuesto")
-async def import_presupuesto(file: UploadFile = File(...)):
+async def import_presupuesto(file: UploadFile = File(...), user_id: str = Depends(verify_admin_or_compras)):
     file_path = f"temp_{file.filename}"
     with open(file_path, "wb") as f: f.write(await file.read())
     pptos = import_presupuesto_from_xlsx(file_path)
     os.remove(file_path)
-    supabase.table("presupuesto").delete().neq("id", -1).execute()
-    supabase.table("presupuesto").insert(pptos).execute()
+    client = supabase_admin if supabase_admin else supabase
+    client.table("presupuesto").delete().neq("id", -1).execute()
+    client.table("presupuesto").insert(pptos).execute()
     return {"status": "success", "count": len(pptos)}
 
 if __name__ == "__main__":

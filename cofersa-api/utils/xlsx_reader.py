@@ -229,21 +229,38 @@ def _col_to_idx(cell_ref: str) -> int:
     return idx - 1
 
 def parse_number(val) -> float:
-    if not val:
+    if val is None or val == '':
         return 0.0
-    val = str(val).strip()
-    try:
-        return float(val)
-    except ValueError:
-        s = val.replace(' ', '')
-        if ',' in s and s.rfind(',') > s.rfind('.'):
-            s = s.replace('.', '').replace(',', '.')
+    val_str = str(val).strip().replace(' ', '')
+    
+    # Detectar el símbolo de porcentaje literal
+    has_pct = False
+    if '%' in val_str:
+        has_pct = True
+        val_str = val_str.replace('%', '')
+    
+    # Manejar comas decimales (formato en español, ej. "2,50" -> "2.50")
+    if ',' in val_str:
+        if '.' not in val_str or val_str.rfind(',') > val_str.rfind('.'):
+            val_str = val_str.replace('.', '').replace(',', '.')
         else:
-            s = s.replace(',', '').replace('.', '')
-        try:
-            return float(s)
-        except ValueError:
-            return 0.0
+            val_str = val_str.replace(',', '')
+    else:
+        # Si no hay comas pero hay puntos, detectar si el punto actúa como separador de miles.
+        # E.g. "5.000", "104.658" o "1.250.000" (grupos de 3 dígitos precedidos por un punto, sin decimales).
+        if re.match(r'^\d{1,3}(\.\d{3})+$', val_str):
+            val_str = val_str.replace('.', '')
+
+    try:
+        num = float(val_str)
+        # Heurística: Excel guarda celdas de porcentaje como fracciones (ej. 4% lo guarda como 0.04).
+        # Si el número está entre 0 (exclusivo) y 1.0 (inclusivo) y NO tiene el símbolo '%' literal,
+        # asumimos que proviene del formato nativo de porcentaje y multiplicamos por 100 para pasarlo a entero.
+        if 0.0 < num <= 1.0 and not has_pct:
+            num = num * 100.0
+        return round(num, 2)
+    except ValueError:
+        return 0.0
 
 def import_reglas_from_xlsx(filepath) -> List[Dict[str, Any]]:
     rows = read_xlsx(filepath)

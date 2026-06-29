@@ -116,73 +116,36 @@ const Usuarios = () => {
     }
 
     try {
-      // 1. Create client without local session persistence to keep current admin logged in
-      const tempClient = createClient(supabaseUrl, supabaseAnonKey, {
-        auth: {
-          persistSession: false,
-          autoRefreshToken: false,
-          detectSessionInUrl: false
+      // Enviar solicitud de creación al backend seguro en Python
+      const response = await fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:8000'}/api/admin/crear-usuario`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
         },
-        db: {
-          schema: 'negociaciones_especiales'
-        }
+        body: JSON.stringify({
+          email: finalEmail,
+          password: newPassword,
+          username: newUsername.trim(),
+          nombre: newNombre.trim(),
+          apellido: newApellido.trim(),
+          role: newRole,
+          supervisor_id: newRole === 'vendedor' ? newSupervisorId : null,
+          status: 'activo'
+        })
       });
 
-      // 2. Sign up the user in Supabase Auth
-      const { data: authData, error: authErr } = await tempClient.auth.signUp({
-        email: finalEmail,
-        password: newPassword,
-        options: {
-          data: {
-            username: newUsername.trim().toLowerCase(),
-            nombre: newNombre.trim(),
-            apellido: newApellido.trim(),
-            role: newRole
-          }
-        }
-      });
-
-      if (authErr) throw authErr;
-
-      const newUserId = authData.user?.id;
-      if (!newUserId) {
-        throw new Error('No se pudo obtener el ID del usuario creado en la autenticación.');
+      if (!response.ok) {
+        const errData = await response.json();
+        throw new Error(errData.detail || 'Error al procesar la creación del usuario en el servidor.');
       }
 
-      // 3. Upsert profile metadata (check first to see if database trigger already inserted it)
-      const { data: profileCheck } = await supabase
-        .from('profiles')
-        .select('id')
-        .eq('id', newUserId)
-        .maybeSingle();
+      const resData = await response.json();
+      
+      const successDetail = resData.action === 'profile_updated'
+        ? `Perfil del usuario ${newUsername} (ya existente globalmente) vinculado y actualizado con éxito.`
+        : `Usuario ${newUsername} creado con éxito.`;
 
-      const profilePayload = {
-        username: newUsername.trim().toLowerCase(),
-        nombre: newNombre.trim(),
-        apellido: newApellido.trim(),
-        email: finalEmail,
-        role: newRole,
-        supervisor_id: newRole === 'vendedor' ? newSupervisorId : null,
-        status: 'activo'
-      };
-
-      if (profileCheck) {
-        const { error: profileErr } = await supabase
-          .from('profiles')
-          .update(profilePayload)
-          .eq('id', newUserId);
-        if (profileErr) throw profileErr;
-      } else {
-        const { error: profileErr } = await supabase
-          .from('profiles')
-          .insert([{
-            id: newUserId,
-            ...profilePayload
-          }]);
-        if (profileErr) throw profileErr;
-      }
-
-      setSuccessMsg(`Usuario ${newUsername} creado con éxito.`);
+      setSuccessMsg(successDetail);
       setShowNewForm(false);
       
       // Reset form fields
