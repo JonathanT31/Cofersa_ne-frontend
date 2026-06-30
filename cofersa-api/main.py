@@ -193,6 +193,37 @@ async def verify_admin_or_compras(authorization: Optional[str] = Header(None)) -
     except Exception as e:
         raise HTTPException(status_code=401, detail=f"No autorizado: {str(e)}")
 
+async def verify_admin(authorization: Optional[str] = Header(None)) -> str:
+    """Verifica si el token Bearer pertenece a un usuario con rol de admin.
+    Retorna el user_id si es válido."""
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Token de autorización faltante o inválido.")
+    
+    token = authorization.split(" ")[1]
+    try:
+        # Consultar el usuario correspondiente al JWT
+        user_res = supabase.auth.get_user(token)
+        if not user_res or not user_res.user:
+            raise Exception("Token inválido o expirado.")
+        
+        user_id = user_res.user.id
+        
+        # Consultar el rol en profiles usando el cliente administrativo para saltar RLS
+        client = supabase_admin if supabase_admin else supabase
+        profile_res = client.table("profiles").select("role").eq("id", user_id).single().execute()
+        if not profile_res.data:
+            raise Exception("Perfil no encontrado.")
+            
+        role = profile_res.data.get("role")
+        if role != "admin":
+            raise HTTPException(status_code=403, detail="Acceso denegado: Se requiere rol de Administrador.")
+            
+        return user_id
+    except HTTPException as http_ex:
+        raise http_ex
+    except Exception as e:
+        raise HTTPException(status_code=401, detail=f"No autorizado: {str(e)}")
+
 def build_login_link(email: Optional[str], redirect_to: str) -> str:
     """Devuelve un magic link de Supabase que loguea automáticamente al destinatario
     y lo deja en `redirect_to`. Si no hay service_role key, no se conoce el email, o
@@ -335,7 +366,7 @@ async def get_stats(user_id: str, role: str):
             "pendientes": len([s for s in data if s['estado'] in ('pendiente', 'en_revision', 'escalada')]),
         }
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Error al obtener las estadísticas del dashboard.")
 
 @app.post("/api/solicitudes/crear")
 async def crear_solicitud(data: Dict[str, Any]):
@@ -866,7 +897,7 @@ async def procesar_solicitud(data: Dict[str, Any]):
     return {"status": "success", "message": "Solicitud aprobada con éxito", "folio": folio}
 
 @app.post("/api/admin/crear-usuario")
-async def admin_crear_usuario(data: Dict[str, Any]):
+async def admin_crear_usuario(data: Dict[str, Any], admin_user_id: str = Depends(verify_admin)):
     if not supabase_admin:
         raise HTTPException(status_code=500, detail="El cliente administrativo de Supabase no está configurado.")
 
@@ -911,38 +942,18 @@ async def admin_crear_usuario(data: Dict[str, Any]):
         if "user_already_exists" in err_msg or "already been registered" in err_msg or "422" in err_msg:
             is_existing = True
             try:
-                page = 1
-                per_page = 100
-                while True:
-                    users_list_res = supabase_admin.auth.admin.list_users(page=page, per_page=per_page)
-                    users = []
-                    if hasattr(users_list_res, "users"):
-                        users = users_list_res.users
-                    elif isinstance(users_list_res, list):
-                        users = users_list_res
-                    elif isinstance(users_list_res, dict):
-                        users = users_list_res.get("users", [])
-                    
-                    if not users:
-                        break
-                    
-                    for u in users:
-                        if u.email and u.email.lower() == clean_email:
-                            user_id = u.id
-                            break
-                    
-                    if user_id:
-                        break
-                    
-                    if len(users) < per_page:
-                        break
-                    
-                    page += 1
-            except Exception as list_err:
-                raise HTTPException(status_code=500, detail=f"Error al listar usuarios existentes: {str(list_err)}")
+                # Buscar el ID del usuario mediante la función RPC segura en PostgreSQL
+                rpc_res = supabase_admin.rpc("get_user_id_by_email", {"email_to_find": clean_email}).execute()
+                user_id = rpc_res.data
+            except Exception as rpc_err:
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"Error al buscar el ID del usuario existente por email: {str(rpc_err)}. "
+                           f"Asegúrate de haber ejecutado la función SQL 'get_user_id_by_email' en Supabase."
+                )
             
             if not user_id:
-                raise HTTPException(status_code=400, detail="El usuario ya existe globalmente pero no se pudo localizar en la autenticación.")
+                raise HTTPException(status_code=400, detail="El usuario ya existe globalmente pero no se pudo localizar su ID.")
         else:
             raise HTTPException(status_code=400, detail=f"Error al crear el usuario en Supabase Auth: {err_msg}")
 
@@ -983,7 +994,24 @@ async def admin_crear_usuario(data: Dict[str, Any]):
             "profile": profile
         }
     except Exception as db_err:
-        raise HTTPException(status_code=500, detail=f"Error en la base de datos de perfiles: {str(db_err)}")
+        err_msg = str(db_err)
+        # Capturar violación de restricción única de username
+        if "profiles_username_key" in err_msg or ("unique constraint" in err_msg and "username" in err_msg):
+            raise HTTPException(
+                status_code=400,
+                detail=f"El nombre de usuario '{clean_username}' ya está asignado a otra persona en el sistema."
+            )
+        # Capturar violación de restricción única de email
+        elif "profiles_email_key" in err_msg or ("unique constraint" in err_msg and "email" in err_msg):
+            raise HTTPException(
+                status_code=400,
+                detail=f"El correo electrónico '{clean_email}' ya está registrado con otra cuenta en el sistema."
+            )
+        else:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Error en la base de datos de perfiles: {err_msg}"
+            )
 
 @app.get("/api/admin/template-reglas")
 def download_template_reglas():

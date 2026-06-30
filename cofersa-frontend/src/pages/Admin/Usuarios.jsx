@@ -24,6 +24,7 @@ const Usuarios = () => {
   const [newSupervisorId, setNewSupervisorId] = useState('');
   const [errorMsg, setErrorMsg] = useState('');
   const [successMsg, setSuccessMsg] = useState('');
+  const [creating, setCreating] = useState(false);
 
   // Fetch users & supervisors from Supabase
   const fetchUsers = async () => {
@@ -116,11 +117,17 @@ const Usuarios = () => {
     }
 
     try {
+      setCreating(true);
       // Enviar solicitud de creación al backend seguro en Python
+      // Obtener el token de la sesión activa de Supabase
+      const sessionRes = await supabase.auth.getSession();
+      const token = sessionRes.data.session?.access_token;
+
       const response = await fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:8000'}/api/admin/crear-usuario`, {
         method: 'POST',
         headers: {
-          'Content-Type': 'application/json'
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
         },
         body: JSON.stringify({
           email: finalEmail,
@@ -163,6 +170,8 @@ const Usuarios = () => {
     } catch (err) {
       console.error('Error creating user:', err);
       setErrorMsg(err.message || 'Error técnico al crear el usuario.');
+    } finally {
+      setCreating(false);
     }
   };
 
@@ -309,8 +318,10 @@ const Usuarios = () => {
               )}
               
               <div style={{ marginTop: '12px' }}>
-                <button type="submit" className="btn btn-success">Crear Usuario</button>
-                <button type="button" className="btn btn-outline" style={{ marginLeft: '8px' }} onClick={() => setShowNewForm(false)}>
+                <button type="submit" className="btn btn-success" disabled={creating}>
+                  {creating ? 'Guardando...' : 'Crear Usuario'}
+                </button>
+                <button type="button" className="btn btn-outline" style={{ marginLeft: '8px' }} onClick={() => setShowNewForm(false)} disabled={creating}>
                   Cancelar
                 </button>
               </div>
