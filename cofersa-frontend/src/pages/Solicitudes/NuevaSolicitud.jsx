@@ -824,6 +824,9 @@ const NuevaSolicitud = () => {
                 <label>Marca *</label>
                 <select className="form-control" value={s.marca} onChange={e => updateSku(s.id, 'marca', e.target.value)} disabled={true}>
                   <option value="">-- Seleccione --</option>
+                  {s.marca && !marcas.includes(s.marca) && (
+                    <option value={s.marca}>{s.marca}</option>
+                  )}
                   {marcas.map(m => <option key={m} value={m}>{m}</option>)}
                 </select>
               </div>

@@ -161,6 +161,8 @@ if SUPABASE_SERVICE_ROLE_KEY:
         print(f"No se pudo inicializar el cliente admin de Supabase: {e}")
         supabase_admin = None
 
+db: Client = supabase_admin if supabase_admin else supabase
+
 
 async def verify_admin_or_compras(authorization: Optional[str] = Header(None)) -> str:
     """Verifica si el token Bearer pertenece a un usuario con rol de admin o compras.
@@ -333,7 +335,7 @@ async def generate_folio():
     now = datetime.now()
     prefix = f"NE-{now.strftime('%Y%m')}-"
     try:
-        res = supabase.table("solicitudes").select("folio").like("folio", f"{prefix}%").order("folio", desc=True).limit(1).execute()
+        res = db.table("solicitudes").select("folio").like("folio", f"{prefix}%").order("folio", desc=True).limit(1).execute()
         new_num = 1
         if res.data:
             last_folio = res.data[0]["folio"]
@@ -351,7 +353,7 @@ def read_root():
 @app.get("/api/dashboard/stats")
 async def get_stats(user_id: str, role: str):
     try:
-        query = supabase.table("solicitudes").select("id, estado")
+        query = db.table("solicitudes").select("id, estado")
         if role == 'vendedor':
             query = query.eq("vendedor_id", user_id)
         elif role == 'supervisor':
@@ -374,9 +376,9 @@ async def crear_solicitud(data: Dict[str, Any]):
     skus = data.get("skus", [])
     
     # 1. Datos base
-    user_res = supabase.table("profiles").select("*").eq("id", vendedor_id).single().execute()
+    user_res = db.table("profiles").select("*").eq("id", vendedor_id).single().execute()
     user = user_res.data
-    reglas_res = supabase.table("reglas").select("*").execute()
+    reglas_res = db.table("reglas").select("*").execute()
     reglas = {r['marca']: r for r in reglas_res.data}
 
     # 1.5. Validar Presupuesto (Advertencia/informacional. No bloquear creación de solicitudes)
@@ -395,19 +397,19 @@ async def crear_solicitud(data: Dict[str, Any]):
 
             # Consultar presupuesto por marca para este asesor
             try:
-                ppto_res = supabase.table("presupuesto").select("marca, ppto_mensual").eq("asesor", username).execute()
+                ppto_res = db.table("presupuesto").select("marca, ppto_mensual").eq("asesor", username).execute()
                 ppto_dict = {p["marca"]: float(p["ppto_mensual"] or 0) for p in ppto_res.data} if ppto_res.data else {}
 
                 # Consultar gasto acumulado del mes actual (excluyendo rechazadas)
                 now = datetime.now()
                 month_start = datetime(now.year, now.month, 1).isoformat()
                 
-                sols_res = supabase.table("solicitudes").select("id").eq("vendedor_id", vendedor_id).gte("created_at", month_start).neq("estado", "rechazada").execute()
+                sols_res = db.table("solicitudes").select("id").eq("vendedor_id", vendedor_id).gte("created_at", month_start).neq("estado", "rechazada").execute()
                 sol_ids = [s["id"] for s in sols_res.data] if sols_res.data else []
                 
                 gasto_dict = {}
                 if sol_ids:
-                    skus_res = supabase.table("solicitud_skus").select("marca, monto_aprobado, monto_descuento, sku_estado").in_("solicitud_id", sol_ids).execute()
+                    skus_res = db.table("solicitud_skus").select("marca, monto_aprobado, monto_descuento, sku_estado").in_("solicitud_id", sol_ids).execute()
                     if skus_res.data:
                         for sk in skus_res.data:
                             if sk.get("sku_estado") == "rechazado":
@@ -470,7 +472,7 @@ async def crear_solicitud(data: Dict[str, Any]):
             estado = "pendiente"
             aprobador_nivel = "compras"
             try:
-                compras_res = supabase.table("profiles").select("*").eq("role", "compras").eq("status", "activo").limit(1).execute()
+                compras_res = db.table("profiles").select("*").eq("role", "compras").eq("status", "activo").limit(1).execute()
                 if compras_res.data:
                     aprobador_id = compras_res.data[0]["id"]
             except Exception as e:
@@ -519,7 +521,7 @@ async def crear_solicitud(data: Dict[str, Any]):
             "approved_at": datetime.now().isoformat()
         })
         
-    sol_res = supabase.table("solicitudes").insert(sol_data).execute()
+    sol_res = db.table("solicitudes").insert(sol_data).execute()
     solicitud = sol_res.data[0]
 
     # Auditoría
@@ -554,7 +556,7 @@ async def crear_solicitud(data: Dict[str, Any]):
                 "aprobado_at": datetime.now().isoformat()
             })
         
-        supabase.table("solicitud_skus").insert(sku_data).execute()
+        db.table("solicitud_skus").insert(sku_data).execute()
         skus_guardados.append(sku_data)
 
     # Determinar si se envía webhook de creación o de aprobación
@@ -571,7 +573,7 @@ async def crear_solicitud(data: Dict[str, Any]):
 
         if aprobador_nivel == "supervisor" and aprobador_id:
             try:
-                sup_res = supabase.table("profiles").select("*").eq("id", aprobador_id).single().execute()
+                sup_res = db.table("profiles").select("*").eq("id", aprobador_id).single().execute()
                 aprobador_info = sup_res.data or {}
                 email_destinatario = aprobador_info.get("email")
             except Exception as e:
@@ -579,7 +581,7 @@ async def crear_solicitud(data: Dict[str, Any]):
         elif aprobador_nivel == "compras":
             email_destinatario = COMPRAS_EMAIL
             try:
-                compras_res = supabase.table("profiles").select("*").eq("role", "compras").eq("status", "activo").limit(1).execute()
+                compras_res = db.table("profiles").select("*").eq("role", "compras").eq("status", "activo").limit(1).execute()
                 if compras_res.data:
                     aprobador_info = compras_res.data[0]
                     email_destinatario = aprobador_info.get("email") or COMPRAS_EMAIL
@@ -598,23 +600,23 @@ async def crear_solicitud(data: Dict[str, Any]):
 
 @app.post("/api/solicitudes/aprobar")
 async def aprobar_solicitud(sol_id: int, user_id: str, comentario: str = Body(None)):
-    update_res = supabase.table("solicitudes").update({
+    update_res = db.table("solicitudes").update({
         "estado": "aprobada",
         "comentario_aprobador": comentario,
         "approved_at": datetime.now().isoformat(),
         "aprobador_final_id": user_id
     }).eq("id", sol_id).execute()
     
-    user_res = supabase.table("profiles").select("full_name").eq("id", user_id).single().execute()
+    user_res = db.table("profiles").select("full_name").eq("id", user_id).single().execute()
     await log_audit(user_id, user_res.data.get("full_name", "Aprobador"), "aprobar_solicitud", "solicitud", sol_id, comentario)
     
     # Send n8n webhook on approval
     try:
-        sol_upd = supabase.table("solicitudes").select("*").eq("id", sol_id).single().execute().data
-        skus_upd = supabase.table("solicitud_skus").select("*").eq("solicitud_id", sol_id).execute().data
-        vendedor_res = supabase.table("profiles").select("*").eq("id", sol_upd["vendedor_id"]).single().execute()
+        sol_upd = db.table("solicitudes").select("*").eq("id", sol_id).single().execute().data
+        skus_upd = db.table("solicitud_skus").select("*").eq("solicitud_id", sol_id).execute().data
+        vendedor_res = db.table("profiles").select("*").eq("id", sol_upd["vendedor_id"]).single().execute()
         vendedor_info = vendedor_res.data if vendedor_res.data else {}
-        aprobador_info = supabase.table("profiles").select("*").eq("id", user_id).single().execute().data
+        aprobador_info = db.table("profiles").select("*").eq("id", user_id).single().execute().data
 
         send_n8n_webhook("aprobada", sol_upd, skus_upd, {
             "vendedor": vendedor_info,
@@ -628,22 +630,22 @@ async def aprobar_solicitud(sol_id: int, user_id: str, comentario: str = Body(No
 
 @app.post("/api/solicitudes/rechazar")
 async def rechazar_solicitud(sol_id: int, user_id: str, comentario: str = Body(...)):
-    update_res = supabase.table("solicitudes").update({
+    update_res = db.table("solicitudes").update({
         "estado": "rechazada",
         "comentario_aprobador": comentario,
         "updated_at": datetime.now().isoformat()
     }).eq("id", sol_id).execute()
     
-    user_res = supabase.table("profiles").select("full_name").eq("id", user_id).single().execute()
+    user_res = db.table("profiles").select("full_name").eq("id", user_id).single().execute()
     await log_audit(user_id, user_res.data.get("full_name", "Aprobador"), "rechazar_solicitud", "solicitud", sol_id, comentario)
 
     # Send n8n webhook on rejection
     try:
-        sol_upd = supabase.table("solicitudes").select("*").eq("id", sol_id).single().execute().data
-        skus_upd = supabase.table("solicitud_skus").select("*").eq("solicitud_id", sol_id).execute().data
-        vendedor_res = supabase.table("profiles").select("*").eq("id", sol_upd["vendedor_id"]).single().execute()
+        sol_upd = db.table("solicitudes").select("*").eq("id", sol_id).single().execute().data
+        skus_upd = db.table("solicitud_skus").select("*").eq("solicitud_id", sol_id).execute().data
+        vendedor_res = db.table("profiles").select("*").eq("id", sol_upd["vendedor_id"]).single().execute()
         vendedor_info = vendedor_res.data if vendedor_res.data else {}
-        aprobador_info = supabase.table("profiles").select("*").eq("id", user_id).single().execute().data
+        aprobador_info = db.table("profiles").select("*").eq("id", user_id).single().execute().data
 
         send_n8n_webhook("rechazada", sol_upd, skus_upd, {
             "vendedor": vendedor_info,
@@ -667,14 +669,14 @@ async def procesar_solicitud(data: Dict[str, Any]):
         raise HTTPException(status_code=400, detail="Faltan datos requeridos (sol_id, user_id)")
 
     # 1. Fetch user profile
-    user_res = supabase.table("profiles").select("*").eq("id", user_id).single().execute()
+    user_res = db.table("profiles").select("*").eq("id", user_id).single().execute()
     if not user_res.data:
         raise HTTPException(status_code=404, detail="Usuario no encontrado")
     user = user_res.data
     role = user.get("role")
 
     # 2. Fetch solicitud
-    sol_res = supabase.table("solicitudes").select("*").eq("id", sol_id).single().execute()
+    sol_res = db.table("solicitudes").select("*").eq("id", sol_id).single().execute()
     if not sol_res.data:
         raise HTTPException(status_code=404, detail="Solicitud no encontrada")
     sol = sol_res.data
@@ -683,12 +685,12 @@ async def procesar_solicitud(data: Dict[str, Any]):
         raise HTTPException(status_code=400, detail=f"La solicitud en estado '{sol['estado']}' no puede ser procesada")
 
     # 3. Load all SKUs
-    skus_res = supabase.table("solicitud_skus").select("*").eq("solicitud_id", sol_id).execute()
+    skus_res = db.table("solicitud_skus").select("*").eq("solicitud_id", sol_id).execute()
     all_skus = skus_res.data or []
 
     # 4. Check for escalation if any pending SKU is being approved
     needs_escalation = False
-    reglas_res = supabase.table("reglas").select("*").execute()
+    reglas_res = db.table("reglas").select("*").execute()
     reglas = {r['marca']: r for r in reglas_res.data} if reglas_res.data else {}
 
     for s in all_skus:
@@ -714,10 +716,10 @@ async def procesar_solicitud(data: Dict[str, Any]):
     if needs_escalation and role not in ('admin', 'compras', 'gerente_ventas'):
         next_level = 'compras'
         # Get active compras user
-        compras_res = supabase.table("profiles").select("*").eq("role", "compras").eq("status", "activo").limit(1).execute()
+        compras_res = db.table("profiles").select("*").eq("role", "compras").eq("status", "activo").limit(1).execute()
         if not compras_res.data:
             # Fallback to any active admin
-            compras_res = supabase.table("profiles").select("*").eq("role", "admin").eq("status", "activo").limit(1).execute()
+            compras_res = db.table("profiles").select("*").eq("role", "admin").eq("status", "activo").limit(1).execute()
         
         if not compras_res.data:
             raise HTTPException(status_code=400, detail="No hay aprobador disponible para compras o admin.")
@@ -726,7 +728,7 @@ async def procesar_solicitud(data: Dict[str, Any]):
         sla_h_esc = 8
         sla_deadline = add_business_hours(datetime.now(), sla_h_esc)
 
-        supabase.table("solicitudes").update({
+        db.table("solicitudes").update({
             "estado": "escalada",
             "aprobador_actual_id": next_approver["id"],
             "aprobador_nivel": next_level,
@@ -739,9 +741,9 @@ async def procesar_solicitud(data: Dict[str, Any]):
 
         # Send email notification
         # Fetch updated solicitud and skus
-        sol_upd = supabase.table("solicitudes").select("*").eq("id", sol_id).single().execute().data
-        skus_upd = supabase.table("solicitud_skus").select("*").eq("solicitud_id", sol_id).execute().data
-        vendedor_res = supabase.table("profiles").select("*").eq("id", sol["vendedor_id"]).single().execute()
+        sol_upd = db.table("solicitudes").select("*").eq("id", sol_id).single().execute().data
+        skus_upd = db.table("solicitud_skus").select("*").eq("solicitud_id", sol_id).execute().data
+        vendedor_res = db.table("profiles").select("*").eq("id", sol["vendedor_id"]).single().execute()
         vendedor_info = vendedor_res.data if vendedor_res.data else {}
 
         subj, html_body = build_solicitud_email(sol_upd, skus_upd, BASE_URL, vendedor_info, next_approver)
@@ -764,7 +766,7 @@ async def procesar_solicitud(data: Dict[str, Any]):
         action = sku_actions.get(sid, "aprobar")
 
         if action == "rechazar":
-            supabase.table("solicitud_skus").update({
+            db.table("solicitud_skus").update({
                 "sku_estado": "rechazado",
                 "sku_comentario": comentario,
                 "aprobado_por": user_id,
@@ -785,7 +787,7 @@ async def procesar_solicitud(data: Dict[str, Any]):
             precio_aprobado = precio_base * (1 - adj_pct / 100)
             monto_aprobado = (precio_base - precio_aprobado) * cantidad
 
-            supabase.table("solicitud_skus").update({
+            db.table("solicitud_skus").update({
                 "porcentaje_aprobado": round(adj_pct, 2),
                 "precio_aprobado": round(precio_aprobado, 2),
                 "monto_aprobado": round(monto_aprobado, 2),
@@ -797,7 +799,7 @@ async def procesar_solicitud(data: Dict[str, Any]):
             await log_audit(user_id, user.get("full_name") or user.get("username", "Aprobador"), "sku_aprobado", "solicitud", sol_id, f"SKU {s['codigo_sku']} ({s['marca']}) aprobado {adj_pct:.2f}%")
 
     # 7. Recalculate status of the request
-    counts_res = supabase.table("solicitud_skus").select("sku_estado, monto_aprobado").eq("solicitud_id", sol_id).execute()
+    counts_res = db.table("solicitud_skus").select("sku_estado, monto_aprobado").eq("solicitud_id", sol_id).execute()
     skus_state = counts_res.data or []
 
     pend = sum(1 for sk in skus_state if sk.get("sku_estado", "pendiente") == "pendiente")
@@ -807,7 +809,7 @@ async def procesar_solicitud(data: Dict[str, Any]):
 
     if pend > 0:
         # Still has pending SKUs -> partially approved
-        supabase.table("solicitudes").update({
+        db.table("solicitudes").update({
             "estado": "parcialmente_aprobada",
             "monto_total_aprobado": round(monto, 2),
             "comentario_aprobador": comentario,
@@ -823,7 +825,7 @@ async def procesar_solicitud(data: Dict[str, Any]):
     # All SKUs processed
     if apro == 0:
         # All rejected
-        supabase.table("solicitudes").update({
+        db.table("solicitudes").update({
             "estado": "rechazada",
             "comentario_aprobador": comentario,
             "updated_at": now_ts
@@ -831,9 +833,9 @@ async def procesar_solicitud(data: Dict[str, Any]):
         await log_audit(user_id, user.get("full_name") or user.get("username", "Aprobador"), "solicitud_rechazada", "solicitud", sol_id, "Todos los SKUs rechazados")
         
         # Send rejection email via n8n webhook and fallback
-        sol_upd = supabase.table("solicitudes").select("*").eq("id", sol_id).single().execute().data
-        skus_upd = supabase.table("solicitud_skus").select("*").eq("solicitud_id", sol_id).execute().data
-        vendedor_res = supabase.table("profiles").select("*").eq("id", sol["vendedor_id"]).single().execute()
+        sol_upd = db.table("solicitudes").select("*").eq("id", sol_id).single().execute().data
+        skus_upd = db.table("solicitud_skus").select("*").eq("solicitud_id", sol_id).execute().data
+        vendedor_res = db.table("profiles").select("*").eq("id", sol["vendedor_id"]).single().execute()
         vendedor_info = vendedor_res.data if vendedor_res.data else {}
         
         # Trigger n8n webhook
@@ -861,7 +863,7 @@ async def procesar_solicitud(data: Dict[str, Any]):
     now = datetime.now()
     prefix = f"NE-{now.strftime('%Y%m')}-"
     try:
-        res = supabase.table("solicitudes").select("folio").like("folio", f"{prefix}%").order("folio", desc=True).limit(1).execute()
+        res = db.table("solicitudes").select("folio").like("folio", f"{prefix}%").order("folio", desc=True).limit(1).execute()
         new_num = 1
         if res.data:
             last_folio = res.data[0]["folio"]
@@ -870,7 +872,7 @@ async def procesar_solicitud(data: Dict[str, Any]):
     except:
         folio = f"{prefix}000001"
 
-    supabase.table("solicitudes").update({
+    db.table("solicitudes").update({
         "estado": "aprobada",
         "folio": folio,
         "aprobador_final_id": user_id,
@@ -883,9 +885,9 @@ async def procesar_solicitud(data: Dict[str, Any]):
     await log_audit(user_id, user.get("full_name") or user.get("username", "Aprobador"), "solicitud_aprobada", "solicitud", sol_id, f"Folio: {folio}, Monto Aprobado: {monto:.2f}")
 
     # Send approval webhook
-    sol_upd = supabase.table("solicitudes").select("*").eq("id", sol_id).single().execute().data
-    skus_upd = supabase.table("solicitud_skus").select("*").eq("solicitud_id", sol_id).execute().data
-    vendedor_res = supabase.table("profiles").select("*").eq("id", sol["vendedor_id"]).single().execute()
+    sol_upd = db.table("solicitudes").select("*").eq("id", sol_id).single().execute().data
+    skus_upd = db.table("solicitud_skus").select("*").eq("solicitud_id", sol_id).execute().data
+    vendedor_res = db.table("profiles").select("*").eq("id", sol["vendedor_id"]).single().execute()
     vendedor_info = vendedor_res.data if vendedor_res.data else {}
 
     send_n8n_webhook("aprobada", sol_upd, skus_upd, {
