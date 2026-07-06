@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import Layout from '../../components/layout/Layout';
 import { supabase } from '../../api/supabaseClient';
+import { useAuth } from '../../context/AuthContext';
 
 const formatCRC = (n) => {
   if (isNaN(n)) return "₡0.00";
@@ -94,6 +95,7 @@ const SearchableSelect = ({ value, onChange, onBlur, options, placeholder }) => 
 };
 
 const Presupuesto = () => {
+  const { user } = useAuth();
   const [presupuesto, setPresupuesto] = useState([]);
   const [loading, setLoading] = useState(true);
   const [importing, setImporting] = useState(false);
@@ -102,6 +104,13 @@ const Presupuesto = () => {
   // States for search dropdowns
   const [profiles, setProfiles] = useState([]);
   const [marcas, setMarcas] = useState([]);
+
+  // States for filters & pagination
+  const [filterMarca, setFilterMarca] = useState('');
+  const [filterAsesor, setFilterAsesor] = useState('');
+  const [filterSupervisor, setFilterSupervisor] = useState('');
+  const [currentPage, setCurrentPage] = useState(1);
+  const itemsPerPage = 25;
 
   useEffect(() => {
     fetchPresupuesto();
@@ -165,7 +174,10 @@ const Presupuesto = () => {
         body: formData,
       });
 
-      if (!response.ok) throw new Error('Error al importar archivo');
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({ detail: 'Error al importar archivo' }));
+        throw new Error(errorData.detail || errorData.message || 'Error al importar archivo');
+      }
       
       const result = await response.json();
       alert(`Éxito: Se importaron ${result.count} registros de presupuesto.`);
@@ -175,6 +187,25 @@ const Presupuesto = () => {
     } finally {
       setImporting(false);
       setFile(null);
+    }
+  };
+
+  const handleClearAll = async () => {
+    if (window.confirm('🚨 ¡ATENCIÓN! ¿Está seguro de que desea eliminar TODOS los registros de presupuesto permanentemente? Esta acción no se puede deshacer.')) {
+      try {
+        setLoading(true);
+        const { error } = await supabase
+          .from('presupuesto')
+          .delete()
+          .neq('id', -1);
+        if (error) throw error;
+        alert('Todos los registros de presupuesto han sido eliminados.');
+        fetchPresupuesto();
+      } catch (err) {
+        alert('Error al borrar los registros: ' + err.message);
+      } finally {
+        setLoading(false);
+      }
     }
   };
 
@@ -234,14 +265,16 @@ const Presupuesto = () => {
     const isNew = typeof row.id === 'string' && row.id.startsWith('new-');
     
     if (isNew) {
+      // Get the latest row from state and apply the new blurred value to avoid stale closures
+      const latestRow = presupuesto.find(p => p.id === row.id) || row;
+      const updatedRow = { ...latestRow, [field]: value };
+
       // We only insert if both marca and asesor have values
-      if (!row.marca || !row.marca.trim() || !row.asesor || !row.asesor.trim()) {
+      if (!updatedRow.marca || !updatedRow.marca.trim() || !updatedRow.asesor || !updatedRow.asesor.trim()) {
         return; 
       }
       try {
-        const { id, ...dataToInsert } = row;
-        // Ensure to save the latest updated field/value in dataToInsert
-        dataToInsert[field] = value;
+        const { id, ...dataToInsert } = updatedRow;
         const { data, error } = await supabase
           .from('presupuesto')
           .insert([dataToInsert])
@@ -284,8 +317,9 @@ const Presupuesto = () => {
   };
 
   // Prepare options for select fields
+  // Any user who is not a vendedor can be a supervisor
   const supervisorOptions = profiles
-    .filter(p => p.role === 'supervisor' || p.role === 'admin')
+    .filter(p => p.role !== 'vendedor' && p.status === 'activo')
     .map(p => ({ value: p.username, label: `${p.nombre} ${p.apellido} (${p.username})` }));
 
   const asesorOptions = profiles
@@ -294,37 +328,118 @@ const Presupuesto = () => {
 
   const marcaOptions = marcas.map(m => ({ value: m, label: m }));
 
+  const filteredPresupuesto = presupuesto.filter(item => {
+    const matchMarca = !filterMarca || item.marca === filterMarca;
+    const matchAsesor = !filterAsesor || item.asesor === filterAsesor;
+    const matchSupervisor = !filterSupervisor || item.supervisor === filterSupervisor;
+    return matchMarca && matchAsesor && matchSupervisor;
+  });
+
+  const indexOfLastItem = currentPage * itemsPerPage;
+  const indexOfFirstItem = indexOfLastItem - itemsPerPage;
+  const currentItems = filteredPresupuesto.slice(indexOfFirstItem, indexOfLastItem);
+  const totalPages = Math.ceil(filteredPresupuesto.length / itemsPerPage);
+
   return (
     <Layout title="Presupuesto" active="presupuesto">
       <h1>Presupuesto Mensual por Marca/Asesor</h1>
       
       <div className="card">
-        <div style={{ display: 'flex', gap: '10px', marginBottom: '15px', flexWrap: 'wrap', alignItems: 'center' }}>
-          
-          <form style={{ display: 'flex', gap: '10px', alignItems: 'center' }} onSubmit={handleImport}>
-            <input 
-                type="file" 
-                accept=".xlsx" 
-                className="form-control" 
-                style={{ maxWidth: '300px' }} 
-                onChange={e => setFile(e.target.files[0])}
-            />
-            <button type="submit" className="btn btn-primary btn-sm" disabled={!file || importing}>
-                {importing ? 'Importando...' : 'Importar Excel'}
+        <div style={{ 
+          display: 'flex', 
+          justifyContent: 'space-between', 
+          alignItems: 'center', 
+          gap: '12px', 
+          marginBottom: '20px', 
+          flexWrap: 'wrap' 
+        }}>
+          {/* Grupo de Acciones Principales */}
+          <div style={{ 
+            display: 'flex', 
+            gap: '10px', 
+            flexWrap: 'wrap', 
+            alignItems: 'center', 
+            flex: '1 1 auto' 
+          }}>
+            <form style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }} onSubmit={handleImport}>
+              <input 
+                  type="file" 
+                  accept=".xlsx" 
+                  className="form-control" 
+                  style={{ maxWidth: '240px', minWidth: '150px' }} 
+                  onChange={e => setFile(e.target.files[0])}
+              />
+              <button type="submit" className="btn btn-primary btn-sm" disabled={!file || importing}>
+                  {importing ? 'Importando...' : 'Importar Excel'}
+              </button>
+            </form>
+            
+            <button 
+              className="btn btn-outline btn-sm" 
+              onClick={handleDownloadTemplate}
+              title="Descarga la plantilla XLSX con el formato correcto para importar"
+              style={{ display: 'flex', alignItems: 'center', gap: '5px' }}
+            >
+              ⬇️ Plantilla
             </button>
-          </form>
-          
-          <button 
-            className="btn btn-outline btn-sm" 
-            onClick={handleDownloadTemplate}
-            title="Descarga la plantilla XLSX con el formato correcto para importar"
-            style={{ display: 'flex', alignItems: 'center', gap: '5px' }}
-          >
-            ⬇️ Plantilla
-          </button>
-          <button className="btn btn-outline btn-sm" onClick={handleExportCSV}>Exportar CSV</button>
-          <button className="btn btn-success btn-sm" onClick={handleAddRow} disabled={loading}>+ Agregar Fila</button>
-          
+            <button className="btn btn-outline btn-sm" onClick={handleExportCSV}>Exportar CSV</button>
+            <button className="btn btn-success btn-sm" onClick={handleAddRow} disabled={loading}>+ Agregar Fila</button>
+          </div>
+
+          {/* Grupo de Acciones de Peligro / Admin */}
+          {user?.role === 'admin' && (
+            <div style={{ flex: '0 0 auto' }}>
+              <button className="btn btn-danger btn-sm" onClick={handleClearAll}>
+                🗑️ Borrar Todo
+              </button>
+            </div>
+          )}
+        </div>
+
+        {/* Filtros de Búsqueda */}
+        <div style={{ display: 'flex', gap: '15px', marginBottom: '15px', flexWrap: 'wrap', background: '#f8f9fa', padding: '12px', borderRadius: '6px', border: '1px solid #e2e8f0' }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', minWidth: '180px' }}>
+            <label style={{ fontSize: '12px', fontWeight: '600', color: '#475569' }}>Filtrar por Marca</label>
+            <select 
+              className="form-control" 
+              value={filterMarca} 
+              onChange={e => { setFilterMarca(e.target.value); setCurrentPage(1); }}
+              style={{ height: '34px', padding: '4px 8px' }}
+            >
+              <option value="">Todas</option>
+              {marcaOptions.map(opt => (
+                <option key={opt.value} value={opt.value}>{opt.label}</option>
+              ))}
+            </select>
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', minWidth: '180px' }}>
+            <label style={{ fontSize: '12px', fontWeight: '600', color: '#475569' }}>Filtrar por Vendedor</label>
+            <select 
+              className="form-control" 
+              value={filterAsesor} 
+              onChange={e => { setFilterAsesor(e.target.value); setCurrentPage(1); }}
+              style={{ height: '34px', padding: '4px 8px' }}
+            >
+              <option value="">Todos</option>
+              {asesorOptions.map(opt => (
+                <option key={opt.value} value={opt.value}>{opt.label}</option>
+              ))}
+            </select>
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', minWidth: '180px' }}>
+            <label style={{ fontSize: '12px', fontWeight: '600', color: '#475569' }}>Filtrar por Supervisor</label>
+            <select 
+              className="form-control" 
+              value={filterSupervisor} 
+              onChange={e => { setFilterSupervisor(e.target.value); setCurrentPage(1); }}
+              style={{ height: '34px', padding: '4px 8px' }}
+            >
+              <option value="">Todos</option>
+              {supervisorOptions.map(opt => (
+                <option key={opt.value} value={opt.value}>{opt.label}</option>
+              ))}
+            </select>
+          </div>
         </div>
         
         <div className="table-responsive">
@@ -342,9 +457,9 @@ const Presupuesto = () => {
             <tbody>
               {loading ? (
                 <tr><td colSpan="6" className="text-center">Cargando presupuesto...</td></tr>
-              ) : presupuesto.map((p, index) => (
+              ) : currentItems.map((p, index) => (
                 <tr key={p.id}>
-                  <td>{index + 1}</td>
+                  <td>{indexOfFirstItem + index + 1}</td>
                   <td>
                     <SearchableSelect 
                       value={p.supervisor}
@@ -390,12 +505,33 @@ const Presupuesto = () => {
                   </td>
                 </tr>
               ))}
-              {!loading && presupuesto.length === 0 && (
+              {!loading && filteredPresupuesto.length === 0 && (
                 <tr><td colSpan="6" className="text-center color-muted">No hay registros</td></tr>
               )}
             </tbody>
           </table>
         </div>
+
+        {/* Paginación */}
+        {totalPages > 1 && (
+          <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '10px', marginTop: '15px' }}>
+            <button 
+              className="btn btn-outline btn-sm" 
+              onClick={() => setCurrentPage(prev => Math.max(prev - 1, 1))}
+              disabled={currentPage === 1}
+            >
+              Anterior
+            </button>
+            <span style={{ fontSize: '13px' }}>Página {currentPage} de {totalPages} ({filteredPresupuesto.length} registros en total)</span>
+            <button 
+              className="btn btn-outline btn-sm" 
+              onClick={() => setCurrentPage(prev => Math.min(prev + 1, totalPages))}
+              disabled={currentPage === totalPages}
+            >
+              Siguiente
+            </button>
+          </div>
+        )}
       </div>
     </Layout>
   );

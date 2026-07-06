@@ -79,7 +79,11 @@ const NuevaSolicitud = () => {
         .select('*');
       if (!error && data) {
         const rulesMap = {};
-        data.forEach(r => rulesMap[r.marca] = r);
+        data.forEach(r => {
+          if (r.marca) {
+            rulesMap[r.marca.trim().toUpperCase()] = r;
+          }
+        });
         setReglasDict(rulesMap);
         
         const uniqueMarcas = [...new Set(data.map(r => r.marca))].sort();
@@ -105,10 +109,10 @@ const NuevaSolicitud = () => {
           const { data: ppto, error: pptoErr } = await supabase
             .from('presupuesto')
             .select('marca, ppto_mensual, asesor')
-            .eq('asesor', usernameVendedor);
+            .ilike('asesor', usernameVendedor);
           if (!pptoErr && ppto) {
             ppto.forEach(p => {
-              if (p.marca) pdict[p.marca] = parseFloat(p.ppto_mensual) || 0;
+              if (p.marca) pdict[p.marca.trim().toUpperCase()] = parseFloat(p.ppto_mensual) || 0;
             });
           }
         }
@@ -137,7 +141,7 @@ const NuevaSolicitud = () => {
               const val = (sk.monto_aprobado !== null && sk.monto_aprobado !== undefined && sk.monto_aprobado !== '')
                 ? parseFloat(sk.monto_aprobado) || 0
                 : parseFloat(sk.monto_descuento) || 0;
-              const m = sk.marca || '';
+              const m = (sk.marca || '').trim().toUpperCase();
               gdict[m] = (gdict[m] || 0) + val;
             });
           }
@@ -400,9 +404,9 @@ const NuevaSolicitud = () => {
     
     if (mdescTotal < 0.01) return false;
 
-    const ppto = presupuestoDict[marca];
+    const ppto = presupuestoDict[marca.trim().toUpperCase()];
     if (ppto === undefined || ppto === null || ppto <= 0) return true;
-    const gastado = gastoDict[marca] || 0;
+    const gastado = gastoDict[marca.trim().toUpperCase()] || 0;
     return Math.round((gastado + mdescTotal) * 100) / 100 > Math.round(ppto * 100) / 100;
   };
 
@@ -418,12 +422,12 @@ const NuevaSolicitud = () => {
 
     if (mdescTotal < 0.01) return null;
 
-    const ppto = presupuestoDict[marca];
+    const ppto = presupuestoDict[marca.trim().toUpperCase()];
     if (ppto === undefined || ppto === null || ppto <= 0) {
       return `⚠️ No hay presupuesto asignado para la marca ${marca}.`;
     }
 
-    const gastado = gastoDict[marca] || 0;
+    const gastado = gastoDict[marca.trim().toUpperCase()] || 0;
     if (Math.round((gastado + mdescTotal) * 100) / 100 > Math.round(ppto * 100) / 100) {
       const disponible = Math.max(0, ppto - gastado);
       return `⚠️ El descuento acumulado solicitado para la marca ${marca} (${formatCRC(mdescTotal)}) supera el presupuesto disponible (${formatCRC(disponible)}).`;
@@ -773,53 +777,55 @@ const NuevaSolicitud = () => {
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px', marginBottom: '15px' }}>
 
                 {/* Porcentajes límite — ocultos para el rol vendedor */}
-                {user?.role !== 'vendedor' && reglasDict[s.marca] && (
+                {user?.role !== 'vendedor' && reglasDict[s.marca.trim().toUpperCase()] && (
                   <div style={{ flex: '1 1 280px', padding: '8px 12px', backgroundColor: '#f8f9fa', borderRadius: '4px', borderLeft: '4px solid #1a5276', fontSize: '13px' }}>
-                    <span style={{ color: '#28a745' }}>• Vendedor hasta {reglasDict[s.marca].limite_vendedor}%</span> <span style={{ color: '#ccc' }}>|</span>{' '}
-                    <span style={{ color: '#ffc107' }}>• Supervisor hasta {reglasDict[s.marca].limite_supervisor}%</span> <span style={{ color: '#ccc' }}>|</span>{' '}
-                    <span style={{ color: '#dc3545' }}>• Compras ≥ {reglasDict[s.marca].limite_compras}%</span>
+                    <span style={{ color: '#28a745' }}>• Vendedor hasta {reglasDict[s.marca.trim().toUpperCase()].limite_vendedor}%</span> <span style={{ color: '#ccc' }}>|</span>{' '}
+                    <span style={{ color: '#ffc107' }}>• Supervisor hasta {reglasDict[s.marca.trim().toUpperCase()].limite_supervisor}%</span> <span style={{ color: '#ccc' }}>|</span>{' '}
+                    <span style={{ color: '#dc3545' }}>• Compras ≥ {reglasDict[s.marca.trim().toUpperCase()].limite_compras}%</span>
                     <div style={{ marginTop: '4px', color: '#666', fontSize: '11px' }}>
                       {new Date().toLocaleString('es-ES', { month: 'short', year: 'numeric' }).replace('.', '').toUpperCase()} — {s.marca} <br/>
                     </div>
                   </div>
                 )}
 
-                {/* Presupuesto / Gasto / Consumo — visible para todos los roles */}
-                <div style={{ flex: '1 1 320px', padding: '8px 12px', backgroundColor: '#eef7ff', borderRadius: '4px', borderLeft: '4px solid #2980b9', fontSize: '13px' }}>
-                  {(() => {
-                    const ppto = presupuestoDict[s.marca];
-                    const gasto = gastoDict[s.marca] || 0;
-                    const hasPpto = ppto !== undefined && ppto !== null && ppto > 0;
-                    const consumo = hasPpto ? (gasto / ppto * 100) : null;
-                    const consumoColor = consumo == null ? '#666' : consumo >= 100 ? '#dc3545' : consumo >= 80 ? '#f39c12' : '#27ae60';
-                    return (
-                      <>
-                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '16px', alignItems: 'flex-start' }}>
-                          <div>
-                            <div style={{ fontSize: '11px', color: '#666' }}>Presupuesto (Colones)</div>
-                            <strong style={{ color: '#1a5276' }}>{hasPpto ? formatCRC(ppto) : 'Sin presupuesto'}</strong>
+                {/* Presupuesto / Gasto / Consumo — visible para todos los roles excepto vendedor */}
+                {user?.role !== 'vendedor' && (
+                  <div style={{ flex: '1 1 320px', padding: '8px 12px', backgroundColor: '#eef7ff', borderRadius: '4px', borderLeft: '4px solid #2980b9', fontSize: '13px' }}>
+                    {(() => {
+                      const ppto = presupuestoDict[s.marca.trim().toUpperCase()];
+                      const gasto = gastoDict[s.marca.trim().toUpperCase()] || 0;
+                      const hasPpto = ppto !== undefined && ppto !== null && ppto > 0;
+                      const consumo = hasPpto ? (gasto / ppto * 100) : null;
+                      const consumoColor = consumo == null ? '#666' : consumo >= 100 ? '#dc3545' : consumo >= 80 ? '#f39c12' : '#27ae60';
+                      return (
+                        <>
+                          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '16px', alignItems: 'flex-start' }}>
+                            <div>
+                              <div style={{ fontSize: '11px', color: '#666' }}>Presupuesto (Colones)</div>
+                              <strong style={{ color: '#1a5276' }}>{hasPpto ? formatCRC(ppto) : 'Sin presupuesto'}</strong>
+                            </div>
+                            <div>
+                              <div style={{ fontSize: '11px', color: '#666' }}>Gasto (Colones)</div>
+                              <strong>{formatCRC(gasto)}</strong>
+                            </div>
+                            <div>
+                              <div style={{ fontSize: '11px', color: '#666' }}>Consumo (% Presupuesto gastado)</div>
+                              <strong style={{ color: consumoColor }}>{consumo != null ? consumo.toFixed(1) + '%' : 'N/A'}</strong>
+                            </div>
                           </div>
-                          <div>
-                            <div style={{ fontSize: '11px', color: '#666' }}>Gasto (Colones)</div>
-                            <strong>{formatCRC(gasto)}</strong>
+                          <div style={{ marginTop: '4px', color: '#666', fontSize: '11px' }}>
+                            {new Date().toLocaleString('es-ES', { month: 'short', year: 'numeric' }).replace('.', '').toUpperCase()} — {s.marca}
                           </div>
-                          <div>
-                            <div style={{ fontSize: '11px', color: '#666' }}>Consumo (% Presupuesto gastado)</div>
-                            <strong style={{ color: consumoColor }}>{consumo != null ? consumo.toFixed(1) + '%' : 'N/A'}</strong>
-                          </div>
-                        </div>
-                        <div style={{ marginTop: '4px', color: '#666', fontSize: '11px' }}>
-                          {new Date().toLocaleString('es-ES', { month: 'short', year: 'numeric' }).replace('.', '').toUpperCase()} — {s.marca}
-                        </div>
-                      </>
-                    );
-                  })()}
-                </div>
+                        </>
+                      );
+                    })()}
+                  </div>
+                )}
 
               </div>
             )}
 
-            <div className="grid-3">
+            <div className="grid-4">
               <div className="form-group">
                 <label>Marca *</label>
                 <select className="form-control" value={s.marca} onChange={e => updateSku(s.id, 'marca', e.target.value)} disabled={true}>
@@ -854,10 +860,23 @@ const NuevaSolicitud = () => {
                 <label>Monto Desc. ₡</label>
                 <input type="number" className="form-control" value={s.mdesc === 0 ? '' : s.mdesc} style={{ background: '#f8f8f8' }}  onChange={e => updateSku(s.id, 'mdesc', e.target.value)} min="0" step="0.01" />
               </div>
+              <div className="form-group">
+                <label>Precio Solicitado ₡</label>
+                <input 
+                  type="number" 
+                  className="form-control" 
+                  value={s.psol === 0 ? '' : s.psol} 
+                  style={{ background: '#f8f8f8' }} 
+                  onChange={e => updateSku(s.id, 'psol', e.target.value)} 
+                  min="0" 
+                  step="0.01" 
+                  disabled={submitting} 
+                />
+              </div>
             </div>
 
             {/* Estimado y Alerta de Aprobación */}
-            {reglasDict[s.marca] && (
+            {reglasDict[s.marca.trim().toUpperCase()] && (
               <div style={{ marginTop: '15px' }}>
                 <div style={{ fontSize: '13px', fontWeight: 'bold', marginBottom: '8px' }}>
                   Estimado gasto total ({s.marca}): <span style={{ color: '#28a745' }}>{formatCRC((parseFloat(s.cantidad) || 0) * (parseFloat(s.precio_base) || 0))}</span>
@@ -866,12 +885,12 @@ const NuevaSolicitud = () => {
                 {(() => {
                   const pct = parseFloat(s.pct) || 0;
                   const role = user?.role;
-                  const regla = reglasDict[s.marca];
+                  const regla = reglasDict[s.marca.trim().toUpperCase()];
                   
                   if (role === 'compras' || role === 'admin') {
                     return (
                       <div style={{ backgroundColor: '#d4edda', color: '#155724', padding: '8px 12px', borderRadius: '4px', fontSize: '13px', border: '1px solid #c3e6cb' }}>
-                        ✓ Esta solicitud se autoaprobará automáticamente por compras/admin.
+                        ✓ Esta solicitud se autoaprobará.
                       </div>
                     );
                   }
@@ -880,13 +899,13 @@ const NuevaSolicitud = () => {
                     if (pct <= regla.limite_supervisor) {
                       return (
                         <div style={{ backgroundColor: '#d4edda', color: '#155724', padding: '8px 12px', borderRadius: '4px', fontSize: '13px', border: '1px solid #c3e6cb' }}>
-                          ✓ Esta solicitud puede autoaprobarse por el supervisor.
+                          ✓ Esta solicitud se autoaprobará.
                         </div>
                       );
                     } else {
                       return (
                         <div style={{ backgroundColor: '#f8d7da', color: '#721c24', padding: '8px 12px', borderRadius: '4px', fontSize: '13px', border: '1px solid #f5c6cb' }}>
-                          ❌ Esta solicitud requiere la aprobación de COMPRAS.
+                          ❌ Esta solicitud necesita aprobación de compras.
                         </div>
                       );
                     }
@@ -898,13 +917,13 @@ const NuevaSolicitud = () => {
                     if (pct <= regla.limite_supervisor) {
                       return (
                         <div style={{ backgroundColor: '#fff3cd', color: '#856404', padding: '8px 12px', borderRadius: '4px', fontSize: '13px', border: '1px solid #ffeeba' }}>
-                          ⚠️ Por falta/exceso de presupuesto, esta solicitud requiere la aprobación del SUPERVISOR.
+                          ⚠️ Esta solicitud necesita aprobación de supervisor.
                         </div>
                       );
                     } else {
                       return (
                         <div style={{ backgroundColor: '#f8d7da', color: '#721c24', padding: '8px 12px', borderRadius: '4px', fontSize: '13px', border: '1px solid #f5c6cb' }}>
-                          ❌ Esta solicitud requiere la aprobación de COMPRAS.
+                          ❌ Esta solicitud necesita aprobación de compras.
                         </div>
                       );
                     }
@@ -912,19 +931,19 @@ const NuevaSolicitud = () => {
                     if (pct <= regla.limite_vendedor) {
                       return (
                         <div style={{ backgroundColor: '#d4edda', color: '#155724', padding: '8px 12px', borderRadius: '4px', fontSize: '13px', border: '1px solid #c3e6cb' }}>
-                          ✓ Esta solicitud puede autoaprobarse por el vendedor.
+                          ✓ Esta solicitud se autoaprobará.
                         </div>
                       );
                     } else if (pct <= regla.limite_supervisor) {
                       return (
                         <div style={{ backgroundColor: '#fff3cd', color: '#856404', padding: '8px 12px', borderRadius: '4px', fontSize: '13px', border: '1px solid #ffeeba' }}>
-                          ⚠️ Esta solicitud requiere la aprobación del SUPERVISOR.
+                          ⚠️ Esta solicitud necesita aprobación de supervisor.
                         </div>
                       );
                     } else {
                       return (
                         <div style={{ backgroundColor: '#f8d7da', color: '#721c24', padding: '8px 12px', borderRadius: '4px', fontSize: '13px', border: '1px solid #f5c6cb' }}>
-                          ❌ Esta solicitud requiere la aprobación de COMPRAS.
+                          ❌ Esta solicitud necesita aprobación de compras.
                         </div>
                       );
                     }

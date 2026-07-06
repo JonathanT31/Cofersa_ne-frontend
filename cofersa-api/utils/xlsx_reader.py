@@ -160,59 +160,76 @@ def generate_template_presupuesto() -> bytes:
     return generate_xlsx(headers, example_rows)
 
 def read_xlsx(filepath) -> List[List[Any]]:
-    """Parse xlsx into list of lists without external dependencies."""
+    """Parse xlsx into list of lists using openpyxl with fallback."""
     try:
-        with zipfile.ZipFile(filepath) as z:
-            # Read shared strings
-            ss = []
-            if 'xl/sharedStrings.xml' in z.namelist():
-                tree = ET.parse(z.open('xl/sharedStrings.xml'))
-                ns = {'s': 'http://schemas.openxmlformats.org/spreadsheetml/2006/main'}
-                for si in tree.findall('.//s:si', ns):
-                    texts = si.findall('.//s:t', ns)
-                    ss.append(''.join(t.text or '' for t in texts))
-            
-            # Find first sheet
-            sheet_name = 'xl/worksheets/sheet1.xml'
-            if sheet_name not in z.namelist():
-                for name in z.namelist():
-                    if name.startswith('xl/worksheets/sheet') and name.endswith('.xml'):
-                        sheet_name = name
-                        break
-            
-            tree = ET.parse(z.open(sheet_name))
-            ns = {'s': 'http://schemas.openxmlformats.org/spreadsheetml/2006/main'}
-            
-            rows = []
-            for row_el in tree.findall('.//s:sheetData/s:row', ns):
-                row_data = {}
-                for c in row_el.findall('s:c', ns):
-                    ref = c.get('r', '')
-                    col_idx = _col_to_idx(ref)
-                    t = c.get('t', '')
-                    v = c.find('s:v', ns)
-                    val = v.text if v is not None else ''
-                    if t == 's' and val:
-                        try:
-                            val = ss[int(val)]
-                        except (ValueError, IndexError):
-                            pass
-                    if t == 'inlineStr':
-                        is_el = c.find('s:is', ns)
-                        if is_el is not None:
-                            t_el = is_el.find('s:t', ns)
-                            val = t_el.text if t_el is not None else ''
-                    row_data[col_idx] = val
-                
-                if row_data:
-                    max_col = max(row_data.keys()) + 1
-                    row_list = [row_data.get(i, '') for i in range(max_col)]
-                    rows.append(row_list)
-            
-            return rows
+        import openpyxl
+        wb = openpyxl.load_workbook(filepath, data_only=True)
+        sheet = wb.active
+        rows = []
+        for row in sheet.iter_rows(values_only=True):
+            row_list = []
+            for cell in row:
+                if cell is None:
+                    row_list.append('')
+                else:
+                    row_list.append(str(cell).strip())
+            if any(cell != '' for cell in row_list):
+                rows.append(row_list)
+        return rows
     except Exception as e:
-        print(f"Error reading xlsx: {e}")
-        return []
+        print(f"Error reading xlsx with openpyxl: {e}. Trying fallback...")
+        try:
+            with zipfile.ZipFile(filepath) as z:
+                # Read shared strings
+                ss = []
+                if 'xl/sharedStrings.xml' in z.namelist():
+                    tree = ET.parse(z.open('xl/sharedStrings.xml'))
+                    ns = {'s': 'http://schemas.openxmlformats.org/spreadsheetml/2006/main'}
+                    for si in tree.findall('.//s:si', ns):
+                        texts = si.findall('.//s:t', ns)
+                        ss.append(''.join(t.text or '' for t in texts))
+                
+                # Find first sheet
+                sheet_name = 'xl/worksheets/sheet1.xml'
+                if sheet_name not in z.namelist():
+                    for name in z.namelist():
+                        if name.startswith('xl/worksheets/sheet') and name.endswith('.xml'):
+                            sheet_name = name
+                            break
+                
+                tree = ET.parse(z.open(sheet_name))
+                ns = {'s': 'http://schemas.openxmlformats.org/spreadsheetml/2006/main'}
+                
+                rows = []
+                for row_el in tree.findall('.//s:sheetData/s:row', ns):
+                    row_data = {}
+                    for c in row_el.findall('s:c', ns):
+                        ref = c.get('r', '')
+                        col_idx = _col_to_idx(ref)
+                        t = c.get('t', '')
+                        v = c.find('s:v', ns)
+                        val = v.text if v is not None else ''
+                        if t == 's' and val:
+                            try:
+                                val = ss[int(val)]
+                            except (ValueError, IndexError):
+                                pass
+                        if t == 'inlineStr':
+                            is_el = c.find('s:is', ns)
+                            if is_el is not None:
+                                t_el = is_el.find('s:t', ns)
+                                val = t_el.text if t_el is not None else ''
+                        row_data[col_idx] = val
+                    
+                    if row_data:
+                        max_col = max(row_data.keys()) + 1
+                        row_list = [row_data.get(i, '') for i in range(max_col)]
+                        rows.append(row_list)
+                
+                return rows
+        except Exception as fallback_e:
+            print(f"Fallback reading xlsx failed: {fallback_e}")
+            return []
 
 def _col_to_idx(cell_ref: str) -> int:
     col_str = ''

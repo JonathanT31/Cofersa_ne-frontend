@@ -1,12 +1,20 @@
 import React, { useState, useEffect } from 'react';
 import Layout from '../../components/layout/Layout';
 import { supabase } from '../../api/supabaseClient';
+import { useAuth } from '../../context/AuthContext';
 
 const Reglas = () => {
+  const { user } = useAuth();
   const [reglas, setReglas] = useState([]);
   const [loading, setLoading] = useState(true);
   const [importing, setImporting] = useState(false);
   const [file, setFile] = useState(null);
+
+  // States for filters & pagination
+  const [filterMarca, setFilterMarca] = useState('');
+  const [filterClasificacion, setFilterClasificacion] = useState('');
+  const [currentPage, setCurrentPage] = useState(1);
+  const itemsPerPage = 25;
 
   useEffect(() => {
     fetchReglas();
@@ -50,7 +58,10 @@ const Reglas = () => {
         body: formData,
       });
 
-      if (!response.ok) throw new Error('Error al importar archivo');
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({ detail: 'Error al importar archivo' }));
+        throw new Error(errorData.detail || errorData.message || 'Error al importar archivo');
+      }
       
       const result = await response.json();
       alert(`Éxito: Se importaron ${result.count} reglas.`);
@@ -60,6 +71,25 @@ const Reglas = () => {
     } finally {
       setImporting(false);
       setFile(null);
+    }
+  };
+
+  const handleClearAll = async () => {
+    if (window.confirm('🚨 ¡ATENCIÓN! ¿Está seguro de que desea eliminar TODAS las reglas de aprobación permanentemente? Esta acción no se puede deshacer.')) {
+      try {
+        setLoading(true);
+        const { error } = await supabase
+          .from('reglas')
+          .delete()
+          .neq('id', -1);
+        if (error) throw error;
+        alert('Todas las reglas han sido eliminadas.');
+        fetchReglas();
+      } catch (err) {
+        alert('Error al borrar los registros: ' + err.message);
+      } finally {
+        setLoading(false);
+      }
     }
   };
 
@@ -126,11 +156,15 @@ const Reglas = () => {
     const isNew = typeof row.id === 'string' && row.id.startsWith('new-');
     
     if (isNew) {
-      if (!row.marca || !row.marca.trim()) {
+      // Get the latest row from state and apply the new blurred value to avoid stale closures
+      const latestRow = reglas.find(r => r.id === row.id) || row;
+      const updatedRow = { ...latestRow, [field]: value };
+
+      if (!updatedRow.marca || !updatedRow.marca.trim()) {
         return; // Esperar a que ingresen una marca para insertar
       }
       try {
-        const { id, ...dataToInsert } = row;
+        const { id, ...dataToInsert } = updatedRow;
         const { data, error } = await supabase
           .from('reglas')
           .insert([dataToInsert])
@@ -178,37 +212,102 @@ const Reglas = () => {
     }
   };
 
+  const filteredReglas = reglas.filter(r => {
+    const matchMarca = !filterMarca || (r.marca || '').toLowerCase().includes(filterMarca.toLowerCase());
+    const matchClasif = !filterClasificacion || r.clasificacion === filterClasificacion;
+    return matchMarca && matchClasif;
+  });
+
+  const indexOfLastItem = currentPage * itemsPerPage;
+  const indexOfFirstItem = indexOfLastItem - itemsPerPage;
+  const currentItems = filteredReglas.slice(indexOfFirstItem, indexOfLastItem);
+  const totalPages = Math.ceil(filteredReglas.length / itemsPerPage);
+
+  const uniqueClasificaciones = [...new Set(reglas.map(r => r.clasificacion).filter(Boolean))].sort();
+
   return (
     <Layout title="Reglas de Aprobación" active="reglas">
       <h1>Reglas de Aprobación por Marca</h1>
       
       <div className="card">
-        <div style={{ display: 'flex', gap: '10px', marginBottom: '15px', flexWrap: 'wrap', alignItems: 'center' }}>
-          
-          <form style={{ display: 'flex', gap: '10px', alignItems: 'center' }} onSubmit={handleImport}>
-            <input 
-                type="file" 
-                accept=".xlsx" 
-                className="form-control" 
-                style={{ maxWidth: '300px' }} 
-                onChange={(e) => setFile(e.target.files[0])}
-            />
-            <button type="submit" className="btn btn-primary btn-sm" disabled={!file || importing}>
-                {importing ? 'Importando...' : 'Importar Excel'}
+        <div style={{ 
+          display: 'flex', 
+          justifyContent: 'space-between', 
+          alignItems: 'center', 
+          gap: '12px', 
+          marginBottom: '20px', 
+          flexWrap: 'wrap' 
+        }}>
+          {/* Grupo de Acciones Principales */}
+          <div style={{ 
+            display: 'flex', 
+            gap: '10px', 
+            flexWrap: 'wrap', 
+            alignItems: 'center', 
+            flex: '1 1 auto' 
+          }}>
+            <form style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }} onSubmit={handleImport}>
+              <input 
+                  type="file" 
+                  accept=".xlsx" 
+                  className="form-control" 
+                  style={{ maxWidth: '240px', minWidth: '150px' }} 
+                  onChange={(e) => setFile(e.target.files[0])}
+              />
+              <button type="submit" className="btn btn-primary btn-sm" disabled={!file || importing}>
+                  {importing ? 'Importando...' : 'Importar Excel'}
+              </button>
+            </form>
+            
+            <button 
+              className="btn btn-outline btn-sm" 
+              onClick={handleDownloadTemplate}
+              title="Descarga la plantilla XLSX con el formato correcto para importar"
+              style={{ display: 'flex', alignItems: 'center', gap: '5px' }}
+            >
+              ⬇️ Plantilla
             </button>
-          </form>
-          
-          <button 
-            className="btn btn-outline btn-sm" 
-            onClick={handleDownloadTemplate}
-            title="Descarga la plantilla XLSX con el formato correcto para importar"
-            style={{ display: 'flex', alignItems: 'center', gap: '5px' }}
-          >
-            ⬇️ Plantilla
-          </button>
-          <button className="btn btn-outline btn-sm" onClick={handleExportCSV}>Exportar CSV</button>
-          <button className="btn btn-success btn-sm" onClick={handleAddRow} disabled={loading}>+ Agregar Fila</button>
-          
+            <button className="btn btn-outline btn-sm" onClick={handleExportCSV}>Exportar CSV</button>
+            <button className="btn btn-success btn-sm" onClick={handleAddRow} disabled={loading}>+ Agregar Fila</button>
+          </div>
+
+          {/* Grupo de Acciones de Peligro / Admin */}
+          {user?.role === 'admin' && (
+            <div style={{ flex: '0 0 auto' }}>
+              <button className="btn btn-danger btn-sm" onClick={handleClearAll}>
+                🗑️ Borrar Todo
+              </button>
+            </div>
+          )}
+        </div>
+
+        {/* Filtros de Búsqueda */}
+        <div style={{ display: 'flex', gap: '15px', marginBottom: '15px', flexWrap: 'wrap', background: '#f8f9fa', padding: '12px', borderRadius: '6px', border: '1px solid #e2e8f0' }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', minWidth: '180px' }}>
+            <label style={{ fontSize: '12px', fontWeight: '600', color: '#475569' }}>Filtrar por Marca</label>
+            <input 
+              type="text" 
+              className="form-control" 
+              placeholder="Buscar marca..." 
+              value={filterMarca} 
+              onChange={e => { setFilterMarca(e.target.value); setCurrentPage(1); }}
+              style={{ height: '34px', padding: '4px 8px' }}
+            />
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', minWidth: '180px' }}>
+            <label style={{ fontSize: '12px', fontWeight: '600', color: '#475569' }}>Filtrar por Clasificación</label>
+            <select 
+              className="form-control" 
+              value={filterClasificacion} 
+              onChange={e => { setFilterClasificacion(e.target.value); setCurrentPage(1); }}
+              style={{ height: '34px', padding: '4px 8px' }}
+            >
+              <option value="">Todas</option>
+              {uniqueClasificaciones.map(c => (
+                <option key={c} value={c}>{c}</option>
+              ))}
+            </select>
+          </div>
         </div>
 
         <div className="table-responsive">
@@ -227,11 +326,11 @@ const Reglas = () => {
             <tbody>
               {loading ? (
                 <tr><td colSpan="7" className="text-center">Cargando reglas...</td></tr>
-              ) : reglas.map((r, index) => {
+              ) : currentItems.map((r, index) => {
                 const comprasLimit = r.limite_supervisor ? `≥ ${(parseFloat(r.limite_supervisor) + 0.01).toFixed(2)}%` : '—';
                 return (
                   <tr key={r.id}>
-                    <td>{index + 1}</td>
+                    <td>{indexOfFirstItem + index + 1}</td>
                     <td>
                       <input 
                         type="text" 
@@ -283,7 +382,7 @@ const Reglas = () => {
                   </tr>
                 );
               })}
-              {!loading && reglas.length === 0 && (
+              {!loading && filteredReglas.length === 0 && (
                 <tr>
                   <td colSpan="7" className="text-center color-muted">No hay reglas definidas</td>
                 </tr>
@@ -291,6 +390,27 @@ const Reglas = () => {
             </tbody>
           </table>
         </div>
+
+        {/* Paginación */}
+        {totalPages > 1 && (
+          <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '10px', marginTop: '15px' }}>
+            <button 
+              className="btn btn-outline btn-sm" 
+              onClick={() => setCurrentPage(prev => Math.max(prev - 1, 1))}
+              disabled={currentPage === 1}
+            >
+              Anterior
+            </button>
+            <span style={{ fontSize: '13px' }}>Página {currentPage} de {totalPages} ({filteredReglas.length} registros en total)</span>
+            <button 
+              className="btn btn-outline btn-sm" 
+              onClick={() => setCurrentPage(prev => Math.min(prev + 1, totalPages))}
+              disabled={currentPage === totalPages}
+            >
+              Siguiente
+            </button>
+          </div>
+        )}
       </div>
     </Layout>
   );

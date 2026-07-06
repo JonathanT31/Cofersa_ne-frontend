@@ -38,7 +38,7 @@ const Usuarios = () => {
       if (error) throw error;
       
       setUsers(data || []);
-      setSupervisors((data || []).filter(u => u.role === 'supervisor' && u.status === 'activo'));
+      setSupervisors((data || []).filter(u => u.role !== 'vendedor' && u.status === 'activo'));
     } catch (err) {
       console.error('Error fetching users:', err);
       setErrorMsg('Error al cargar la lista de usuarios: ' + err.message);
