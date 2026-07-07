@@ -421,17 +421,16 @@ async def crear_solicitud(data: Dict[str, Any]):
                             m = sk.get("marca", "")
                             gasto_dict[m] = gasto_dict.get(m, 0.0) + val
                 
-                # Determinar si el presupuesto es insuficiente o no existe para alguna marca con descuento
+                # Determinar si el presupuesto es insuficiente o no existe para alguna marca
                 for marca, nuevo_monto in nuevos_gastos.items():
-                    if nuevo_monto >= 0.01:
-                        ppto_lim = ppto_dict.get(marca)
-                        if ppto_lim is None or ppto_lim <= 0:
-                            presupuesto_excedido = True
-                            break
-                        gasto_act = gasto_dict.get(marca, 0.0)
-                        if round(gasto_act + nuevo_monto, 2) > round(ppto_lim, 2):
-                            presupuesto_excedido = True
-                            break
+                    ppto_lim = ppto_dict.get(marca)
+                    if ppto_lim is None or ppto_lim <= 0:
+                        presupuesto_excedido = True
+                        break
+                    gasto_act = gasto_dict.get(marca, 0.0)
+                    if round(gasto_act + nuevo_monto, 2) > round(ppto_lim, 2):
+                        presupuesto_excedido = True
+                        break
             except Exception as p_err:
                 print(f"Error al verificar presupuesto en backend: {p_err}")
 

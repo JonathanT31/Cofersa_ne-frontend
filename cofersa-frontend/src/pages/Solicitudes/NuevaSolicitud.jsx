@@ -401,8 +401,6 @@ const NuevaSolicitud = () => {
     const mdescTotal = skus
       .filter(s => s.marca === marca)
       .reduce((sum, s) => sum + (parseFloat(s.mdesc) || 0), 0);
-    
-    if (mdescTotal < 0.01) return false;
 
     const ppto = presupuestoDict[marca.trim().toUpperCase()];
     if (ppto === undefined || ppto === null || ppto <= 0) return true;
@@ -410,31 +408,6 @@ const NuevaSolicitud = () => {
     return Math.round((gastado + mdescTotal) * 100) / 100 > Math.round(ppto * 100) / 100;
   };
 
-  const getBrandBudgetWarning = (marca) => {
-    // Los usuarios con roles de compras, supervisor y admin no deben restringirse ni alertarse innecesariamente por falta de presupuesto
-    if (user?.role && user.role !== 'vendedor') return null;
-    if (!marca) return null;
-
-    // Calcular el descuento total solicitado en este formulario para esta marca
-    const mdescTotal = skus
-      .filter(s => s.marca === marca)
-      .reduce((sum, s) => sum + (parseFloat(s.mdesc) || 0), 0);
-
-    if (mdescTotal < 0.01) return null;
-
-    const ppto = presupuestoDict[marca.trim().toUpperCase()];
-    if (ppto === undefined || ppto === null || ppto <= 0) {
-      return `⚠️ No hay presupuesto asignado para la marca ${marca}.`;
-    }
-
-    const gastado = gastoDict[marca.trim().toUpperCase()] || 0;
-    if (Math.round((gastado + mdescTotal) * 100) / 100 > Math.round(ppto * 100) / 100) {
-      const disponible = Math.max(0, ppto - gastado);
-      return `⚠️ El descuento acumulado solicitado para la marca ${marca} (${formatCRC(mdescTotal)}) supera el presupuesto disponible (${formatCRC(disponible)}).`;
-    }
-
-    return null;
-  };
 
   const enviarSolicitud = async () => {
     const errors = [];
@@ -952,25 +925,6 @@ const NuevaSolicitud = () => {
               </div>
             )}
 
-            {/* Advertencia de Presupuesto (Inline e Interactiva) */}
-            {(() => {
-              const warningMsg = getBrandBudgetWarning(s.marca);
-              if (!warningMsg) return null;
-              return (
-                <div style={{ 
-                  marginTop: '10px', 
-                  backgroundColor: '#fff3cd', 
-                  color: '#856404', 
-                  padding: '8px 12px', 
-                  borderRadius: '4px', 
-                  fontSize: '13px', 
-                  border: '1px solid #ffeeba',
-                  fontWeight: '500'
-                }}>
-                  {warningMsg}
-                </div>
-              );
-            })()}
           </div>
         ))}
 

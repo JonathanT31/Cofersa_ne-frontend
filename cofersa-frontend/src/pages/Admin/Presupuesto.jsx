@@ -138,7 +138,7 @@ const Presupuesto = () => {
     try {
       const { data: profs } = await supabase
         .from('profiles')
-        .select('username, nombre, apellido, role');
+        .select('username, nombre, apellido, role, status');
       setProfiles(profs || []);
 
       const { data: rules } = await supabase

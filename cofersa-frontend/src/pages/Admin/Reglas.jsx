@@ -141,12 +141,7 @@ const Reglas = () => {
   const handleCellChange = (id, field, value) => {
     setReglas(prev => prev.map(r => {
       if (r.id === id) {
-        const updated = { ...r, [field]: value };
-        if (field === 'limite_supervisor') {
-          const num = parseFloat(value);
-          updated.limite_compras = isNaN(num) ? 0 : parseFloat((num + 0.01).toFixed(2));
-        }
-        return updated;
+        return { ...r, [field]: value };
       }
       return r;
     }));
@@ -181,10 +176,6 @@ const Reglas = () => {
     } else {
       try {
         const updateData = { [field]: value };
-        if (field === 'limite_supervisor') {
-          const num = parseFloat(value);
-          updateData.limite_compras = isNaN(num) ? 0 : parseFloat((num + 0.01).toFixed(2));
-        }
         
         const { error } = await supabase
           .from('reglas')
@@ -327,7 +318,6 @@ const Reglas = () => {
               {loading ? (
                 <tr><td colSpan="7" className="text-center">Cargando reglas...</td></tr>
               ) : currentItems.map((r, index) => {
-                const comprasLimit = r.limite_supervisor ? `≥ ${(parseFloat(r.limite_supervisor) + 0.01).toFixed(2)}%` : '—';
                 return (
                   <tr key={r.id}>
                     <td>{indexOfFirstItem + index + 1}</td>
@@ -373,8 +363,20 @@ const Reglas = () => {
                         style={{ width: '80px' }}
                       />
                     </td>
-                    <td style={{ padding: '8px', fontSize: '13px', color: '#555' }}>
-                      <strong>{comprasLimit}</strong>
+                    <td>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                        <span style={{ fontWeight: 'bold' }}>≥</span>
+                        <input 
+                          type="number" 
+                          className="form-control" 
+                          value={r.limite_compras} 
+                          step="0.01"
+                          onChange={e => handleCellChange(r.id, 'limite_compras', parseFloat(e.target.value) || 0)}
+                          onBlur={e => handleCellBlur(r, 'limite_compras', parseFloat(e.target.value) || 0)}
+                          style={{ width: '80px' }}
+                        />
+                        <span>%</span>
+                      </div>
                     </td>
                     <td>
                       <button className="btn btn-danger btn-sm" onClick={() => handleDelete(r.id)}>✕</button>
