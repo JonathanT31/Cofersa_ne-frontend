@@ -57,74 +57,7 @@ def format_all_dates(obj: Any) -> Any:
         return format_iso_datetime_string(obj)
     return obj
 
-def send_n8n_webhook(event_type: str, solicitud: Dict[str, Any], skus: List[Dict[str, Any]], extra_info: Dict[str, Any] = None) -> bool:
-    """Send payload to n8n webhook on request creation or approval with formatted dates."""
-    url = os.getenv("N8N_EMAIL_WEBHOOK_URL", "https://sandboxn8n.mayoreo.biz/webhook-test/28efcada-13fd-4552-abe2-7aace29324b6")
-    
-    # Format all dates in payload to display nicely in emails/notifications
-    solicitud_formateada = format_all_dates(solicitud)
-    skus_formateados = format_all_dates(skus)
-    extra_info_formateada = format_all_dates(extra_info or {})
 
-    # Build the link to the request detail. If a magic link can be generated for the
-    # recipient, the email button logs them in automatically; otherwise it falls back
-    # to the plain URL (which requires a normal login).
-    sol_id = solicitud.get("id") if isinstance(solicitud, dict) else None
-    if sol_id:
-        destino = f"{BASE_URL.rstrip('/')}/solicitud/{sol_id}"
-        email_destinatario = (extra_info or {}).get("email_destinatario")
-        extra_info_formateada["url_solicitud"] = build_login_link(email_destinatario, destino)
-
-    # Guardar una notificación in-app para el vendedor (visible en la pestaña Notificaciones).
-    notif_map = {
-        "creada":    ("solicitud_enviada",   "Solicitud enviada",   "Tu solicitud {ref} fue enviada para aprobación."),
-        "aprobada":  ("solicitud_aprobada",  "Solicitud aprobada",  "Tu solicitud {ref} fue aprobada."),
-        "rechazada": ("solicitud_cancelada", "Solicitud cancelada", "Tu solicitud {ref} fue cancelada/rechazada."),
-    }
-    if event_type in notif_map:
-        ref = solicitud.get("folio") or (f"#{sol_id}" if sol_id else "")
-        url_in_app = f"/solicitud/{sol_id}" if sol_id else None
-
-        vendedor = (extra_info or {}).get("vendedor") or {}
-        vendedor_id = vendedor.get("id")
-        if vendedor_id:
-            tipo, titulo, mensaje = notif_map[event_type]
-            crear_notificacion(vendedor_id, tipo, titulo, mensaje.format(ref=ref).strip(),
-                               "solicitud", sol_id, url_in_app)
-
-        # En una solicitud nueva, avisar también al aprobador que tiene algo pendiente.
-        if event_type == "creada":
-            aprobador = (extra_info or {}).get("aprobador") or {}
-            aprobador_id = aprobador.get("id")
-            if aprobador_id and aprobador_id != vendedor_id:
-                vend_nombre = f"{vendedor.get('nombre', '')} {vendedor.get('apellido', '')}".strip() or "un vendedor"
-                crear_notificacion(
-                    aprobador_id, "solicitud_enviada", "Solicitud por aprobar",
-                    f"Tienes la solicitud {ref} de {vend_nombre} pendiente de aprobación.",
-                    "solicitud", sol_id, url_in_app
-                )
-
-    payload = {
-        "event": event_type,  # "creada", "aprobada", o "rechazada"
-        "solicitud": solicitud_formateada,
-        "skus": skus_formateados,
-        "extra_info": extra_info_formateada,
-        "timestamp": datetime.now().strftime("%d/%m/%Y %I:%M:%S %p")
-    }
-    try:
-        req = urllib.request.Request(
-            url,
-            data=json.dumps(payload).encode('utf-8'),
-            headers={'Content-Type': 'application/json'},
-            method='POST'
-        )
-        with urllib.request.urlopen(req, timeout=10) as response:
-            res_body = response.read().decode('utf-8')
-            print(f"n8n webhook success: {res_body}")
-            return True
-    except Exception as e:
-        print(f"Error calling n8n webhook: {e}")
-        return False
 
 
 
@@ -163,6 +96,113 @@ if SUPABASE_SERVICE_ROLE_KEY:
         supabase_admin = None
 
 db: Client = supabase_admin if supabase_admin else supabase
+
+
+def send_n8n_webhook(event_type: str, solicitud: Dict[str, Any], skus: List[Dict[str, Any]], extra_info: Dict[str, Any] = None) -> bool:
+    """Send payload to n8n webhook on request creation or approval with formatted dates."""
+    url = os.getenv("N8N_EMAIL_WEBHOOK_URL", "https://sandboxn8n.mayoreo.biz/webhook-test/28efcada-13fd-4552-abe2-7aace29324b6")
+    
+    # Format all dates in payload to display nicely in emails/notifications
+    solicitud_formateada = format_all_dates(solicitud)
+    skus_formateados = format_all_dates(skus)
+    extra_info_formateada = format_all_dates(extra_info or {})
+
+    # Obtener información de correos necesarios
+    vendedor = (extra_info or {}).get("vendedor") or {}
+    vendedor_id = vendedor.get("id")
+    vendedor_email = vendedor.get("email")
+    
+    # Obtener correo del supervisor si existe
+    supervisor_email = None
+    supervisor_info = {}
+    if vendedor_id and db:
+        try:
+            # Buscar supervisor del vendedor
+            supervisor_id = vendedor.get("supervisor_id")
+            if supervisor_id:
+                supervisor_res = db.table("profiles").select("*").eq("id", supervisor_id).single().execute()
+                if supervisor_res.data:
+                    supervisor_info = supervisor_res.data
+                    supervisor_email = supervisor_info.get("email")
+        except Exception as e:
+            print(f"Error obteniendo información del supervisor: {e}")
+    
+    # Correos de compras y negociaciones desde variables de entorno
+    compras_email = COMPRAS_EMAIL
+    negociaciones_email = NEGOCIACIONES_EMAIL
+
+    # Build the link to the request detail. If a magic link can be generated for the
+    # recipient, the email button logs them in automatically; otherwise it falls back
+    # to the plain URL (which requires a normal login).
+    sol_id = solicitud.get("id") if isinstance(solicitud, dict) else None
+    if sol_id:
+        destino = f"{BASE_URL.rstrip('/')}/solicitud/{sol_id}"
+        
+        # Crear URLs específicas para cada tipo de usuario
+        extra_info_formateada["url_solicitud"] = destino  # URL base
+        extra_info_formateada["url_vendedor"] = build_login_link(vendedor_email, destino)
+        extra_info_formateada["url_supervisor"] = build_login_link(supervisor_email, destino)
+        extra_info_formateada["url_compras"] = build_login_link(compras_email, destino)
+        extra_info_formateada["url_negociaciones"] = build_login_link(negociaciones_email, destino)
+        
+        # Agregar correos al extra_info para que n8n los use
+        extra_info_formateada["email_vendedor"] = vendedor_email
+        extra_info_formateada["email_supervisor"] = supervisor_email
+        extra_info_formateada["email_compras"] = compras_email
+        extra_info_formateada["email_negociaciones"] = negociaciones_email
+        
+        # Agregar información del supervisor si existe
+        if supervisor_info:
+            extra_info_formateada["supervisor_info"] = supervisor_info
+
+    # Guardar una notificación in-app para el vendedor (visible en la pestaña Notificaciones).
+    notif_map = {
+        "creada":    ("solicitud_enviada",   "Solicitud enviada",   "Tu solicitud {ref} fue enviada para aprobación."),
+        "aprobada":  ("solicitud_aprobada",  "Solicitud aprobada",  "Tu solicitud {ref} fue aprobada."),
+        "rechazada": ("solicitud_cancelada", "Solicitud cancelada", "Tu solicitud {ref} fue cancelada/rechazada."),
+    }
+    if event_type in notif_map:
+        ref = solicitud.get("folio") or (f"#{sol_id}" if sol_id else "")
+        url_in_app = f"/solicitud/{sol_id}" if sol_id else None
+
+        if vendedor_id:
+            tipo, titulo, mensaje = notif_map[event_type]
+            crear_notificacion(vendedor_id, tipo, titulo, mensaje.format(ref=ref).strip(),
+                               "solicitud", sol_id, url_in_app)
+
+        # En una solicitud nueva, avisar también al aprobador que tiene algo pendiente.
+        if event_type == "creada":
+            aprobador = (extra_info or {}).get("aprobador") or {}
+            aprobador_id = aprobador.get("id")
+            if aprobador_id and aprobador_id != vendedor_id:
+                vend_nombre = f"{vendedor.get('nombre', '')} {vendedor.get('apellido', '')}".strip() or "un vendedor"
+                crear_notificacion(
+                    aprobador_id, "solicitud_enviada", "Solicitud por aprobar",
+                    f"Tienes la solicitud {ref} de {vend_nombre} pendiente de aprobación.",
+                    "solicitud", sol_id, url_in_app
+                )
+
+    payload = {
+        "event": event_type,  # "creada", "aprobada", o "rechazada"
+        "solicitud": solicitud_formateada,
+        "skus": skus_formateados,
+        "extra_info": extra_info_formateada,
+        "timestamp": datetime.now().strftime("%d/%m/%Y %I:%M:%S %p")
+    }
+    try:
+        req = urllib.request.Request(
+            url,
+            data=json.dumps(payload).encode('utf-8'),
+            headers={'Content-Type': 'application/json'},
+            method='POST'
+        )
+        with urllib.request.urlopen(req, timeout=10) as response:
+            res_body = response.read().decode('utf-8')
+            print(f"n8n webhook success: {res_body}")
+            return True
+    except Exception as e:
+        print(f"Error calling n8n webhook: {e}")
+        return False
 
 
 async def verify_admin_or_compras(authorization: Optional[str] = Header(None)) -> str:
@@ -253,6 +293,7 @@ SMTP_CONFIG = {
 }
 BASE_URL = os.getenv("VITE_BASE_URL", "http://localhost:5173")
 COMPRAS_EMAIL = os.getenv("COMPRAS_EMAIL", "compras@cofersa.cr")
+NEGOCIACIONES_EMAIL = os.getenv("NEGOCIACIONES_EMAIL", "negociacionespecial@cofersa.cr")
 
 
 # --- FUNCIONES DE AYUDA (BUSINESS LOGIC) ---
