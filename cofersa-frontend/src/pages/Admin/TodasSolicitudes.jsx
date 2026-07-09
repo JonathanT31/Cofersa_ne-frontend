@@ -31,9 +31,14 @@ const TodasSolicitudes = () => {
   const [loading, setLoading] = useState(true);
 
   // Filter States
+  const [filterSearch, setFilterSearch] = useState('');
   const [filterEstado, setFilterEstado] = useState('');
   const [filterDesde, setFilterDesde] = useState('');
   const [filterHasta, setFilterHasta] = useState('');
+  
+  // Pagination States
+  const [currentPage, setCurrentPage] = useState(1);
+  const itemsPerPage = 20;
 
   useEffect(() => {
     fetchSolicitudes();
@@ -61,12 +66,23 @@ const TodasSolicitudes = () => {
 
   // Client-side filtering logic
   const filteredSolicitudes = solicitudes.filter(s => {
-    // 1. Estado Filter
+    // 1. Text Search Filter (Folio, Cliente, Vendedor, Pedido)
+    const searchLower = filterSearch.toLowerCase().trim();
+    const matchesSearch = !searchLower ||
+      (s.folio || '').toLowerCase().includes(searchLower) ||
+      (s.cliente_nombre || '').toLowerCase().includes(searchLower) ||
+      (s.cliente_codigo || '').toLowerCase().includes(searchLower) ||
+      (s.numero_pedido || '').toLowerCase().includes(searchLower) ||
+      (s.vendedor ? `${s.vendedor.nombre} ${s.vendedor.apellido}` : '').toLowerCase().includes(searchLower);
+
+    if (!matchesSearch) return false;
+
+    // 2. Estado Filter
     if (filterEstado && s.estado !== filterEstado) {
       return false;
     }
 
-    // 2. Date Filters (comparing YYYY-MM-DD strings)
+    // 3. Date Filters (comparing YYYY-MM-DD strings)
     if (s.created_at) {
       const createdDate = s.created_at.substring(0, 10);
       if (filterDesde && createdDate < filterDesde) {
@@ -83,6 +99,20 @@ const TodasSolicitudes = () => {
 
     return true;
   });
+
+  // Pagination parameters
+  const indexOfLastItem = currentPage * itemsPerPage;
+  const indexOfFirstItem = indexOfLastItem - itemsPerPage;
+  const currentSolicitudes = filteredSolicitudes.slice(indexOfFirstItem, indexOfLastItem);
+  const totalPages = Math.ceil(filteredSolicitudes.length / itemsPerPage);
+
+  const cleanAllFilters = () => {
+    setFilterSearch('');
+    setFilterEstado('');
+    setFilterDesde('');
+    setFilterHasta('');
+    setCurrentPage(1);
+  };
 
   return (
     <Layout title="Todas Solicitudes" active="todas">
@@ -103,12 +133,24 @@ const TodasSolicitudes = () => {
         borderRadius: '8px', 
         border: '1px solid #e2e8f0' 
       }}>
+        <div className="form-group" style={{ margin: 0, minWidth: '180px', flex: '1 1 auto' }}>
+          <label style={{ fontSize: '11px', color: '#64748b', fontWeight: 600, display: 'block', marginBottom: '4px' }}>Buscar Folio / Cliente / Vendedor</label>
+          <input 
+            type="text" 
+            className="form-control" 
+            placeholder="Buscar..." 
+            value={filterSearch} 
+            onChange={e => { setFilterSearch(e.target.value); setCurrentPage(1); }}
+            style={{ height: '36px', minHeight: '36px' }}
+          />
+        </div>
+
         <div className="form-group" style={{ margin: 0, minWidth: '160px' }}>
           <label style={{ fontSize: '11px', color: '#64748b', fontWeight: 600, display: 'block', marginBottom: '4px' }}>Estado</label>
           <select 
             className="form-control" 
             value={filterEstado} 
-            onChange={e => setFilterEstado(e.target.value)}
+            onChange={e => { setFilterEstado(e.target.value); setCurrentPage(1); }}
             style={{ height: '36px', minHeight: '36px' }}
           >
             <option value="">Todos los estados</option>
@@ -128,7 +170,7 @@ const TodasSolicitudes = () => {
             type="date" 
             className="form-control" 
             value={filterDesde} 
-            onChange={e => setFilterDesde(e.target.value)}
+            onChange={e => { setFilterDesde(e.target.value); setCurrentPage(1); }}
             style={{ height: '36px', minHeight: '36px' }}
           />
         </div>
@@ -139,7 +181,7 @@ const TodasSolicitudes = () => {
             type="date" 
             className="form-control" 
             value={filterHasta} 
-            onChange={e => setFilterHasta(e.target.value)}
+            onChange={e => { setFilterHasta(e.target.value); setCurrentPage(1); }}
             style={{ height: '36px', minHeight: '36px' }}
           />
         </div>
@@ -147,7 +189,7 @@ const TodasSolicitudes = () => {
         <div style={{ alignSelf: 'flex-end' }}>
           <button 
             className="btn btn-outline btn-sm" 
-            onClick={() => { setFilterEstado(''); setFilterDesde(''); setFilterHasta(''); }}
+            onClick={cleanAllFilters}
             style={{ height: '36px', padding: '0 16px', display: 'flex', alignItems: 'center' }}
           >
             Limpiar Filtros
@@ -176,7 +218,7 @@ const TodasSolicitudes = () => {
             <tbody>
               {loading ? (
                 <tr><td colSpan="7" className="text-center" style={{ padding: '20px' }}>Cargando solicitudes...</td></tr>
-              ) : filteredSolicitudes.map(s => (
+              ) : currentSolicitudes.map(s => (
                 <tr key={s.id}>
                   <td><Link to={`/solicitud/${s.id}`}>{s.folio || `#${s.id}`}</Link></td>
                   <td>{s.vendedor ? `${s.vendedor.nombre} ${s.vendedor.apellido}` : '—'}</td>
@@ -194,6 +236,27 @@ const TodasSolicitudes = () => {
           </table>
         </div>
       </div>
+
+      {/* Paginación */}
+      {totalPages > 1 && (
+        <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '10px', marginTop: '15px' }}>
+          <button 
+            className="btn btn-outline btn-sm" 
+            onClick={() => setCurrentPage(prev => Math.max(prev - 1, 1))}
+            disabled={currentPage === 1}
+          >
+            Anterior
+          </button>
+          <span style={{ fontSize: '13px' }}>Página {currentPage} de {totalPages}</span>
+          <button 
+            className="btn btn-outline btn-sm" 
+            onClick={() => setCurrentPage(prev => Math.min(prev + 1, totalPages))}
+            disabled={currentPage === totalPages}
+          >
+            Siguiente
+          </button>
+        </div>
+      )}
     </Layout>
   );
 };

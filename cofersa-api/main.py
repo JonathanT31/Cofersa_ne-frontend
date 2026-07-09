@@ -421,26 +421,30 @@ async def crear_solicitud(data: Dict[str, Any]):
     user_res = db.table("profiles").select("*").eq("id", vendedor_id).single().execute()
     user = user_res.data
     reglas_res = db.table("reglas").select("*").execute()
-    reglas = {r['marca']: r for r in reglas_res.data}
+    reglas = {r['marca'].strip().upper(): r for r in reglas_res.data if r.get('marca')}
 
     # 1.5. Validar Presupuesto (Advertencia/informacional. No bloquear creación de solicitudes)
     role = user.get("role", "vendedor")
     presupuesto_excedido = False
     
     if role == 'vendedor':
+        # Por defecto asumimos excedido (bloqueado) hasta comprobar lo contrario
+        presupuesto_excedido = True
         username = user.get("username", "")
         if username:
             # Agrupar nuevo gasto propuesto por marca
             nuevos_gastos = {}
             for sku in skus:
                 m = sku.get("marca")
-                mdesc = float(sku.get("monto_descuento") or 0)
-                nuevos_gastos[m] = round(nuevos_gastos.get(m, 0.0) + mdesc, 2)
+                if m:
+                    m_upper = m.strip().upper()
+                    mdesc = float(sku.get("monto_descuento") or 0)
+                    nuevos_gastos[m_upper] = round(nuevos_gastos.get(m_upper, 0.0) + mdesc, 2)
 
-            # Consultar presupuesto por marca para este asesor
+            # Consultar presupuesto por marca para este asesor de manera insensible a mayúsculas
             try:
-                ppto_res = db.table("presupuesto").select("marca, ppto_mensual").eq("asesor", username).execute()
-                ppto_dict = {p["marca"]: float(p["ppto_mensual"] or 0) for p in ppto_res.data} if ppto_res.data else {}
+                ppto_res = db.table("presupuesto").select("marca, ppto_mensual").ilike("asesor", username.strip()).execute()
+                ppto_dict = {p["marca"].strip().upper(): float(p["ppto_mensual"] or 0) for p in ppto_res.data if p.get('marca')} if ppto_res.data else {}
 
                 # Consultar gasto acumulado del mes actual (excluyendo rechazadas)
                 now = datetime.now()
@@ -461,18 +465,23 @@ async def crear_solicitud(data: Dict[str, Any]):
                                 val = sk.get("monto_descuento")
                             val = float(val or 0)
                             m = sk.get("marca", "")
-                            gasto_dict[m] = gasto_dict.get(m, 0.0) + val
+                            m_upper = m.strip().upper()
+                            gasto_dict[m_upper] = gasto_dict.get(m_upper, 0.0) + val
                 
-                # Determinar si el presupuesto es insuficiente o no existe para alguna marca
+                # Determinar si el presupuesto es suficiente
+                all_within_budget = True
                 for marca, nuevo_monto in nuevos_gastos.items():
                     ppto_lim = ppto_dict.get(marca)
                     if ppto_lim is None or ppto_lim <= 0:
-                        presupuesto_excedido = True
+                        all_within_budget = False
                         break
                     gasto_act = gasto_dict.get(marca, 0.0)
                     if round(gasto_act + nuevo_monto, 2) > round(ppto_lim, 2):
-                        presupuesto_excedido = True
+                        all_within_budget = False
                         break
+                
+                if all_within_budget and nuevos_gastos:
+                    presupuesto_excedido = False
             except Exception as p_err:
                 print(f"Error al verificar presupuesto en backend: {p_err}")
 
@@ -481,7 +490,9 @@ async def crear_solicitud(data: Dict[str, Any]):
     max_pcts = {}
     for sku in skus:
         m, p = sku.get("marca"), float(sku.get("porcentaje_descuento_sol") or 0)
-        max_pcts[m] = max(p, max_pcts.get(m, 0))
+        if m:
+            m_upper = m.strip().upper()
+            max_pcts[m_upper] = max(p, max_pcts.get(m_upper, 0))
             
     for marca, pct in max_pcts.items():
         regla = reglas.get(marca)
@@ -997,6 +1008,23 @@ async def admin_crear_usuario(data: Dict[str, Any], admin_user_id: str = Depends
             
             if not user_id:
                 raise HTTPException(status_code=400, detail="El usuario ya existe globalmente pero no se pudo localizar su ID.")
+            
+            # Actualizar la contraseña y metadatos del usuario existente en Supabase Auth
+            try:
+                supabase_admin.auth.admin.update_user_by_id(user_id, {
+                    "password": password,
+                    "user_metadata": {
+                        "username": clean_username,
+                        "nombre": clean_nombre,
+                        "apellido": clean_apellido,
+                        "role": role
+                    }
+                })
+            except Exception as update_err:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"El usuario ya existe, pero no se pudo actualizar su contraseña en Supabase Auth: {str(update_err)}"
+                )
         else:
             raise HTTPException(status_code=400, detail=f"Error al crear el usuario en Supabase Auth: {err_msg}")
 
