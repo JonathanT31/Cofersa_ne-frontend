@@ -26,6 +26,13 @@ const Usuarios = () => {
   const [successMsg, setSuccessMsg] = useState('');
   const [creating, setCreating] = useState(false);
 
+  // Filter & Pagination States
+  const [filterSearch, setFilterSearch] = useState('');
+  const [filterRole, setFilterRole] = useState('');
+  const [filterStatus, setFilterStatus] = useState('');
+  const [currentPage, setCurrentPage] = useState(1);
+  const itemsPerPage = 20;
+
   // Fetch users & supervisors from Supabase
   const fetchUsers = async () => {
     try {
@@ -50,6 +57,26 @@ const Usuarios = () => {
   useEffect(() => {
     fetchUsers();
   }, []);
+
+  // Filter and pagination logic
+  const filteredUsers = users.filter(u => {
+    const searchLower = filterSearch.toLowerCase().trim();
+    const matchesSearch = !searchLower || 
+      (u.username || '').toLowerCase().includes(searchLower) ||
+      (u.nombre || '').toLowerCase().includes(searchLower) ||
+      (u.apellido || '').toLowerCase().includes(searchLower) ||
+      (u.email || '').toLowerCase().includes(searchLower);
+    
+    const matchesRole = !filterRole || u.role === filterRole;
+    const matchesStatus = !filterStatus || u.status === filterStatus;
+    
+    return matchesSearch && matchesRole && matchesStatus;
+  });
+
+  const indexOfLastItem = currentPage * itemsPerPage;
+  const indexOfFirstItem = indexOfLastItem - itemsPerPage;
+  const currentUsers = filteredUsers.slice(indexOfFirstItem, indexOfLastItem);
+  const totalPages = Math.ceil(filteredUsers.length / itemsPerPage);
 
   // Update specific user field locally and sync with Supabase
   const handleFieldChange = async (userId, field, value) => {
@@ -229,10 +256,61 @@ const Usuarios = () => {
       {successMsg && <div className="alert alert-success">{successMsg}</div>}
 
       <div className="card">
-        <div style={{ display: 'flex', gap: '10px', marginBottom: '15px', flexWrap: 'wrap', alignItems: 'flex-end' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '10px', marginBottom: '15px', flexWrap: 'wrap' }}>
           <button className="btn btn-success btn-sm" onClick={() => { setShowNewForm(true); setErrorMsg(''); setSuccessMsg(''); }}>
             + Nuevo Usuario
           </button>
+        </div>
+
+        {/* Filtros de Búsqueda */}
+        <div style={{ display: 'flex', gap: '15px', marginBottom: '15px', flexWrap: 'wrap', background: '#f8f9fa', padding: '12px', borderRadius: '6px', border: '1px solid #e2e8f0' }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', minWidth: '200px', flex: '1 1 auto' }}>
+            <label style={{ fontSize: '12px', fontWeight: '600', color: '#475569' }}>Buscar Usuario / Nombre / Email</label>
+            <input 
+              type="text" 
+              className="form-control" 
+              placeholder="Buscar..." 
+              value={filterSearch} 
+              onChange={e => { setFilterSearch(e.target.value); setCurrentPage(1); }}
+              style={{ height: '34px', padding: '4px 8px' }}
+            />
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', minWidth: '150px' }}>
+            <label style={{ fontSize: '12px', fontWeight: '600', color: '#475569' }}>Filtrar por Rol</label>
+            <select 
+              className="form-control" 
+              value={filterRole} 
+              onChange={e => { setFilterRole(e.target.value); setCurrentPage(1); }}
+              style={{ height: '34px', padding: '4px 8px' }}
+            >
+              <option value="">Todos</option>
+              {['vendedor','supervisor','gerente_ventas','compras','admin'].map(r => (
+                <option key={r} value={r}>{r}</option>
+              ))}
+            </select>
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', minWidth: '120px' }}>
+            <label style={{ fontSize: '12px', fontWeight: '600', color: '#475569' }}>Estado</label>
+            <select 
+              className="form-control" 
+              value={filterStatus} 
+              onChange={e => { setFilterStatus(e.target.value); setCurrentPage(1); }}
+              style={{ height: '34px', padding: '4px 8px' }}
+            >
+              <option value="">Todos</option>
+              <option value="activo">Activo</option>
+              <option value="inactivo">Inactivo</option>
+            </select>
+          </div>
+          <div style={{ alignSelf: 'flex-end' }}>
+            <button 
+              className="btn btn-outline btn-sm" 
+              onClick={() => { setFilterSearch(''); setFilterRole(''); setFilterStatus(''); setCurrentPage(1); }}
+              style={{ height: '34px', padding: '0 12px', display: 'flex', alignItems: 'center' }}
+            >
+              Limpiar
+            </button>
+          </div>
         </div>
         
         {showNewForm && (
@@ -348,9 +426,9 @@ const Usuarios = () => {
                 </tr>
               </thead>
               <tbody>
-                {users.map((u, index) => (
+                {currentUsers.map((u, index) => (
                   <tr key={u.id}>
-                    <td>{index + 1}</td>
+                    <td>{indexOfFirstItem + index + 1}</td>
                     <td>
                       <input 
                         type="text" 
@@ -408,9 +486,7 @@ const Usuarios = () => {
                         style={{ width: '130px' }}
                       >
                         <option value="">N/A</option>
-                        {supervisors.map(s => (
-                          <option key={s.id} value={s.id}>{s.nombre} {s.apellido}</option>
-                        ))}
+                        {supervisors.map(s => <option key={s.id} value={s.id}>{s.nombre} {s.apellido}</option>)}
                       </select>
                     </td>
                     <td>
@@ -443,8 +519,36 @@ const Usuarios = () => {
                     </td>
                   </tr>
                 ))}
+                {!loading && filteredUsers.length === 0 && (
+                  <tr>
+                    <td colSpan="9" className="text-center color-muted" style={{ padding: '20px' }}>
+                      No se encontraron usuarios con los filtros aplicados
+                    </td>
+                  </tr>
+                )}
               </tbody>
             </table>
+          </div>
+        )}
+
+        {/* Paginación */}
+        {totalPages > 1 && (
+          <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '10px', marginTop: '15px' }}>
+            <button 
+              className="btn btn-outline btn-sm" 
+              onClick={() => setCurrentPage(prev => Math.max(prev - 1, 1))}
+              disabled={currentPage === 1}
+            >
+              Anterior
+            </button>
+            <span style={{ fontSize: '13px' }}>Página {currentPage} de {totalPages} ({filteredUsers.length} registros en total)</span>
+            <button 
+              className="btn btn-outline btn-sm" 
+              onClick={() => setCurrentPage(prev => Math.min(prev + 1, totalPages))}
+              disabled={currentPage === totalPages}
+            >
+              Siguiente
+            </button>
           </div>
         )}
       </div>

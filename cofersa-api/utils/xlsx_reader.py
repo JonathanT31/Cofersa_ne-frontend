@@ -335,9 +335,9 @@ def import_presupuesto_from_xlsx(filepath) -> List[Dict[str, Any]]:
         
         if marca and supervisor:
             results.append({
-                'supervisor': supervisor,
-                'asesor': asesor,
-                'marca': marca,
+                'supervisor': supervisor.strip().lower(),
+                'asesor': asesor.strip().lower() if asesor else '',
+                'marca': marca.strip().upper(),
                 'ppto_mensual': ppto,
             })
     return results

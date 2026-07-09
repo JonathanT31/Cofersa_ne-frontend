@@ -417,7 +417,14 @@ const NuevaSolicitud = () => {
     if (!skus.length) errors.push('Debe agregar al menos una línea de SKU.');
 
     skus.forEach((s) => {
-      if (!s.marca) errors.push(`Línea #${s.id}: Seleccione una marca.`);
+      if (!s.marca) {
+        errors.push(`Línea #${s.id}: Seleccione una marca.`);
+      } else {
+        const marcaUpper = s.marca.trim().toUpperCase();
+        if (!reglasDict[marcaUpper]) {
+          errors.push(`Línea #${s.id}: No existe regla para la marca "${s.marca}", comuníquese con su supervisor.`);
+        }
+      }
       if (!s.codigo_sku.trim()) errors.push(`Línea #${s.id}: Código SKU requerido.`);
       if (parseFloat(s.cantidad) <= 0) errors.push(`Línea #${s.id}: Cantidad debe ser mayor a 0.`);
       if (parseFloat(s.precio_base) <= 0) errors.push(`Línea #${s.id}: Precio LPV debe ser mayor a 0.`);
@@ -849,6 +856,14 @@ const NuevaSolicitud = () => {
             </div>
 
             {/* Estimado y Alerta de Aprobación */}
+            {s.marca && !reglasDict[s.marca.trim().toUpperCase()] && (
+              <div style={{ marginTop: '15px' }}>
+                <div style={{ backgroundColor: '#f8d7da', color: '#721c24', padding: '8px 12px', borderRadius: '4px', fontSize: '13px', border: '1px solid #f5c6cb' }}>
+                  ⚠️ No existe regla para esta marca ({s.marca}), comuníquese con su supervisor.
+                </div>
+              </div>
+            )}
+
             {reglasDict[s.marca.trim().toUpperCase()] && (
               <div style={{ marginTop: '15px' }}>
                 <div style={{ fontSize: '13px', fontWeight: 'bold', marginBottom: '8px' }}>
