@@ -1,10 +1,11 @@
 import os
+import io
 import json
 import urllib.request
 import re
 from datetime import datetime, timedelta
 from typing import List, Dict, Any, Optional
-
+import traceback
 from fastapi import FastAPI, HTTPException, Body, UploadFile, File, Header, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from supabase import create_client, Client, ClientOptions
@@ -1036,25 +1037,51 @@ def download_template_presupuesto():
 
 @app.post("/api/admin/import-reglas")
 async def import_reglas(file: UploadFile = File(...), user_id: str = Depends(verify_admin_or_compras)):
-    file_path = f"temp_{file.filename}"
-    with open(file_path, "wb") as f: f.write(await file.read())
-    reglas = import_reglas_from_xlsx(file_path)
-    os.remove(file_path)
-    client = supabase_admin if supabase_admin else supabase
-    client.table("reglas").delete().neq("id", -1).execute()
-    client.table("reglas").insert(reglas).execute()
-    return {"status": "success", "count": len(reglas)}
+    try:
+        print(True, f"--- Iniciando importación de reglas: {file.filename} ---")
+        
+        contents = await file.read()
+        file_buffer = io.BytesIO(contents)
+        
+        # Procesamos
+        reglas = import_reglas_from_xlsx(file_buffer)
+        print(f"Reglas procesadas exitosamente en memoria: {len(reglas)} encontradas.")
+        
+        # Conexión Supabase
+        client = supabase_admin if supabase_admin else supabase
+        client.table("reglas").upsert(reglas, on_conflict="marca,clasificacion").execute()
+        
+        return {"status": "success", "count": len(reglas)}
+        
+    except Exception as e:
+        # Esto imprimirá el error real con la línea exacta en tu consola local
+        print("\n!!! ERROR CRÍTICO EN ENDPOINT IMPORT-REGLAS !!!")
+        traceback.print_exc() 
+        
+        # Además se lo mandamos al frontend para que lo veas en el alert()
+        raise HTTPException(status_code=500, detail=f"Error interno: {str(e)}")
+
 
 @app.post("/api/admin/import-presupuesto")
 async def import_presupuesto(file: UploadFile = File(...), user_id: str = Depends(verify_admin_or_compras)):
-    file_path = f"temp_{file.filename}"
-    with open(file_path, "wb") as f: f.write(await file.read())
-    pptos = import_presupuesto_from_xlsx(file_path)
-    os.remove(file_path)
-    client = supabase_admin if supabase_admin else supabase
-    client.table("presupuesto").delete().neq("id", -1).execute()
-    client.table("presupuesto").insert(pptos).execute()
-    return {"status": "success", "count": len(pptos)}
+    try:
+        print(f"--- Iniciando importación de presupuesto: {file.filename} ---")
+        
+        contents = await file.read()
+        file_buffer = io.BytesIO(contents)
+        
+        pptos = import_presupuesto_from_xlsx(file_buffer)
+        print(f"Presupuestos procesados exitosamente: {len(pptos)} encontrados.")
+        
+        client = supabase_admin if supabase_admin else supabase
+        client.table("presupuesto").upsert(pptos, on_conflict="supervisor,marca,asesor").execute()
+        
+        return {"status": "success", "count": len(pptos)}
+        
+    except Exception as e:
+        print("\n!!! ERROR CRÍTICO EN ENDPOINT IMPORT-PRESUPUESTO !!!")
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Error interno: {str(e)}")
 
 if __name__ == "__main__":
     import uvicorn

@@ -3,7 +3,7 @@ import xml.etree.ElementTree as ET
 import csv
 import io
 import re
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Union
 
 
 # ---------------------------------------------------------------------------
@@ -159,11 +159,13 @@ def generate_template_presupuesto() -> bytes:
     ]
     return generate_xlsx(headers, example_rows)
 
-def read_xlsx(filepath) -> List[List[Any]]:
-    """Parse xlsx into list of lists using openpyxl with fallback."""
+def read_xlsx(file_source: Union[str, io.BytesIO]) -> List[List[Any]]:
+    """Parse xlsx into list of lists using openpyxl with fallback.
+    Supports both file paths (str) and memory streams (BytesIO).
+    """
     try:
         import openpyxl
-        wb = openpyxl.load_workbook(filepath, data_only=True)
+        wb = openpyxl.load_workbook(file_source, data_only=True)
         sheet = wb.active
         rows = []
         for row in sheet.iter_rows(values_only=True):
@@ -179,7 +181,7 @@ def read_xlsx(filepath) -> List[List[Any]]:
     except Exception as e:
         print(f"Error reading xlsx with openpyxl: {e}. Trying fallback...")
         try:
-            with zipfile.ZipFile(filepath) as z:
+            with zipfile.ZipFile(file_source) as z:
                 # Read shared strings
                 ss = []
                 if 'xl/sharedStrings.xml' in z.namelist():
