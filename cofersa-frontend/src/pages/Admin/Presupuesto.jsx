@@ -8,7 +8,7 @@ const formatCRC = (n) => {
   return "₡" + Number(n).toLocaleString('en', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 };
 
-const SearchableSelect = ({ value, onChange, onBlur, options, placeholder }) => {
+const SearchableSelect = ({ value, onChange, onBlur, options, placeholder, maxResults = 30 }) => {
   const [search, setSearch] = useState('');
   const [isOpen, setIsOpen] = useState(false);
 
@@ -17,10 +17,14 @@ const SearchableSelect = ({ value, onChange, onBlur, options, placeholder }) => 
     setSearch(matched ? matched.label : value || '');
   }, [value, options]);
 
+  // Filtrado de opciones
   const filtered = options.filter(o => 
     o.label.toLowerCase().includes(search.toLowerCase()) ||
     o.value.toLowerCase().includes(search.toLowerCase())
   );
+
+  // Se limita la cantidad de elementos renderizados para no congelar/sobrecargar el navegador
+  const visibleOptions = filtered.slice(0, maxResults);
 
   const handleSelect = (option) => {
     onChange(option.value);
@@ -29,6 +33,14 @@ const SearchableSelect = ({ value, onChange, onBlur, options, placeholder }) => 
     if (onBlur) {
       onBlur(option.value);
     }
+  };
+
+  const handleClear = (e) => {
+    e.stopPropagation();
+    onChange('');
+    setSearch('');
+    setIsOpen(false);
+    if (onBlur) onBlur('');
   };
 
   useEffect(() => {
@@ -47,18 +59,38 @@ const SearchableSelect = ({ value, onChange, onBlur, options, placeholder }) => 
 
   return (
     <div className="search-select-container" style={{ position: 'relative', minWidth: '180px' }}>
-      <input 
-        type="text" 
-        className="form-control" 
-        value={search} 
-        onChange={e => {
-          setSearch(e.target.value);
-          setIsOpen(true);
-        }}
-        onFocus={() => setIsOpen(true)}
-        placeholder={placeholder}
-        style={{ width: '100%' }}
-      />
+      <div style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
+        <input 
+          type="text" 
+          className="form-control" 
+          value={search} 
+          onChange={e => {
+            setSearch(e.target.value);
+            setIsOpen(true);
+          }}
+          onFocus={() => setIsOpen(true)}
+          placeholder={placeholder}
+          style={{ width: '100%', paddingRight: search ? '24px' : '8px' }}
+        />
+        {search && (
+          <button
+            type="button"
+            onClick={handleClear}
+            style={{
+              position: 'absolute',
+              right: '8px',
+              background: 'none',
+              border: 'none',
+              cursor: 'pointer',
+              color: '#94a3b8',
+              fontSize: '12px',
+              padding: '0 4px'
+            }}
+          >
+            ✕
+          </button>
+        )}
+      </div>
       {isOpen && (
         <div style={{
           position: 'absolute',
@@ -69,22 +101,29 @@ const SearchableSelect = ({ value, onChange, onBlur, options, placeholder }) => 
           border: '1px solid #cbd5e1',
           borderRadius: '6px',
           zIndex: 1000,
-          maxHeight: '180px',
+          maxHeight: '200px',
           overflowY: 'auto',
           boxShadow: '0 4px 6px -1px rgba(0,0,0,0.1), 0 2px 4px -1px rgba(0,0,0,0.06)'
         }}>
-          {filtered.length > 0 ? (
-            filtered.map(opt => (
-              <div 
-                key={opt.value} 
-                style={{ padding: '8px 12px', cursor: 'pointer', borderBottom: '1px solid #f1f5f9', fontSize: '13px' }}
-                onClick={() => handleSelect(opt)}
-                onMouseEnter={e => e.currentTarget.style.background = '#f1f5f9'}
-                onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
-              >
-                {opt.label}
-              </div>
-            ))
+          {visibleOptions.length > 0 ? (
+            <>
+              {visibleOptions.map(opt => (
+                <div 
+                  key={opt.value} 
+                  style={{ padding: '8px 12px', cursor: 'pointer', borderBottom: '1px solid #f1f5f9', fontSize: '13px' }}
+                  onClick={() => handleSelect(opt)}
+                  onMouseEnter={e => e.currentTarget.style.background = '#f1f5f9'}
+                  onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
+                >
+                  {opt.label}
+                </div>
+              ))}
+              {filtered.length > maxResults && (
+                <div style={{ padding: '6px 12px', color: '#64748b', fontSize: '11px', textAlign: 'center', background: '#f8fafc' }}>
+                  Mostrando {maxResults} de {filtered.length} opciones. Escribe para filtrar más.
+                </div>
+              )}
+            </>
           ) : (
             <div style={{ padding: '8px 12px', color: '#94a3b8', fontSize: '12px' }}>No se encontraron opciones</div>
           )}
@@ -100,6 +139,8 @@ const Presupuesto = () => {
   const [loading, setLoading] = useState(true);
   const [importing, setImporting] = useState(false);
   const [file, setFile] = useState(null);
+  const [cache, setCache] = useState({});
+  const [totalCount, setTotalCount] = useState(0);
 
   // States for search dropdowns
   const [profiles, setProfiles] = useState([]);
@@ -113,25 +154,65 @@ const Presupuesto = () => {
   const itemsPerPage = 25;
 
   useEffect(() => {
-    fetchPresupuesto();
+    fetchPresupuesto(currentPage);
+  }, [currentPage, filterMarca, filterAsesor, filterSupervisor]);
+
+  useEffect(() => {
     fetchSupportData();
   }, []);
 
-  const fetchPresupuesto = async () => {
+  const invalidateCacheAndReload = () => {
+    setCache({});
+    fetchPresupuesto(currentPage, true);
+  };
+
+  const fetchPresupuesto = async (page = currentPage, forceFetch = false) => {
+    // Generamos una clave única para la combinación actual de filtros y página
+    const cacheKey = `${filterMarca}_${filterAsesor}_${filterSupervisor}_page_${page}`;
+
+    // Si ya existe en caché y no se fuerza recarga (por insert/update/delete), no consultamos la DB
+    if (!forceFetch && cache[cacheKey]) {
+      setPresupuesto(cache[cacheKey].data);
+      setTotalCount(cache[cacheKey].count);
+      return;
+    }
+
     try {
       setLoading(true);
-      const { data, error } = await supabase
+      const pageSize = 50;
+      const totalPages = Math.ceil(totalCount / pageSize);
+      const indexOfFirstItem = (currentPage - 1) * pageSize;
+      const from = (page - 1) * pageSize;
+      const to = from + pageSize - 1;
+
+      // Construcción dinámica de la consulta con filtros en el servidor
+      let query = supabase
         .from('presupuesto')
-        .select('*')
-        .order('supervisor', { ascending: true });
-      
+        .select('*', { count: 'exact' })
+        .order('supervisor', { ascending: true })
+        .range(from, to);
+
+      if (filterMarca) query = query.eq('marca', filterMarca);
+      if (filterAsesor) query = query.eq('asesor', filterAsesor);
+      if (filterSupervisor) query = query.eq('supervisor', filterSupervisor);
+
+      const { data, error, count } = await query;
       if (error) throw error;
-      setPresupuesto(data || []);
+
+      const fetchedData = data || [];
+      setPresupuesto(fetchedData);
+      setTotalCount(count || 0);
+
+      // Guardar resultado en el caché en memoria
+      setCache(prev => ({
+        ...prev,
+        [cacheKey]: { data: fetchedData, count: count || 0 }
+      }));
     } catch (err) {
       console.error('Error fetching presupuesto:', err);
     } finally {
       setLoading(false);
-    }  
+    }
   };
 
   const fetchSupportData = async () => {
@@ -181,7 +262,7 @@ const Presupuesto = () => {
       
       const result = await response.json();
       alert(`Éxito: Se importaron ${result.count} registros de presupuesto.`);
-      fetchPresupuesto();
+      invalidateCacheAndReload();
     } catch (err) {
       alert('Error: ' + err.message);
     } finally {
@@ -200,7 +281,7 @@ const Presupuesto = () => {
           .neq('id', -1);
         if (error) throw error;
         alert('Todos los registros de presupuesto han sido eliminados.');
-        fetchPresupuesto();
+        invalidateCacheAndReload();
       } catch (err) {
         alert('Error al borrar los registros: ' + err.message);
       } finally {
@@ -312,7 +393,7 @@ const Presupuesto = () => {
     if (window.confirm('¿Eliminar este registro permanentemente?')) {
       const { error } = await supabase.from('presupuesto').delete().eq('id', id);
       if (error) alert('Error: ' + error.message);
-      else fetchPresupuesto();
+      else invalidateCacheAndReload();
     }
   };
 
@@ -328,17 +409,11 @@ const Presupuesto = () => {
 
   const marcaOptions = marcas.map(m => ({ value: m, label: m }));
 
-  const filteredPresupuesto = presupuesto.filter(item => {
-    const matchMarca = !filterMarca || item.marca === filterMarca;
-    const matchAsesor = !filterAsesor || item.asesor === filterAsesor;
-    const matchSupervisor = !filterSupervisor || item.supervisor === filterSupervisor;
-    return matchMarca && matchAsesor && matchSupervisor;
-  });
 
-  const indexOfLastItem = currentPage * itemsPerPage;
-  const indexOfFirstItem = indexOfLastItem - itemsPerPage;
-  const currentItems = filteredPresupuesto.slice(indexOfFirstItem, indexOfLastItem);
-  const totalPages = Math.ceil(filteredPresupuesto.length / itemsPerPage);
+
+  const pageSize = 50;
+  const totalPages = Math.ceil(totalCount / pageSize);
+  const indexOfFirstItem = (currentPage - 1) * pageSize;
 
   return (
     <Layout title="Presupuesto" active="presupuesto">
@@ -399,46 +474,31 @@ const Presupuesto = () => {
         {/* Filtros de Búsqueda */}
         <div style={{ display: 'flex', gap: '15px', marginBottom: '15px', flexWrap: 'wrap', background: '#f8f9fa', padding: '12px', borderRadius: '6px', border: '1px solid #e2e8f0' }}>
           <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', minWidth: '180px' }}>
-            <label style={{ fontSize: '12px', fontWeight: '600', color: '#475569' }}>Filtrar por Marca</label>
-            <select 
-              className="form-control" 
-              value={filterMarca} 
-              onChange={e => { setFilterMarca(e.target.value); setCurrentPage(1); }}
-              style={{ height: '34px', padding: '4px 8px' }}
-            >
-              <option value="">Todas</option>
-              {marcaOptions.map(opt => (
-                <option key={opt.value} value={opt.value}>{opt.label}</option>
-              ))}
-            </select>
+            <label style={{ fontSize: '12px', fontWeight: '600', color: '#475569' }}>Filtrar por Supervisor</label>
+            <SearchableSelect 
+              value={filterSupervisor}
+              onChange={val => { setFilterSupervisor(val); setCurrentPage(1); }}
+              options={supervisorOptions}
+              placeholder="Todos los supervisores..."
+            />
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', minWidth: '180px' }}>
             <label style={{ fontSize: '12px', fontWeight: '600', color: '#475569' }}>Filtrar por Vendedor</label>
-            <select 
-              className="form-control" 
-              value={filterAsesor} 
-              onChange={e => { setFilterAsesor(e.target.value); setCurrentPage(1); }}
-              style={{ height: '34px', padding: '4px 8px' }}
-            >
-              <option value="">Todos</option>
-              {asesorOptions.map(opt => (
-                <option key={opt.value} value={opt.value}>{opt.label}</option>
-              ))}
-            </select>
+            <SearchableSelect 
+              value={filterAsesor}
+              onChange={val => { setFilterAsesor(val); setCurrentPage(1); }}
+              options={asesorOptions}
+              placeholder="Todos los vendedores..."
+            />
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', minWidth: '180px' }}>
-            <label style={{ fontSize: '12px', fontWeight: '600', color: '#475569' }}>Filtrar por Supervisor</label>
-            <select 
-              className="form-control" 
-              value={filterSupervisor} 
-              onChange={e => { setFilterSupervisor(e.target.value); setCurrentPage(1); }}
-              style={{ height: '34px', padding: '4px 8px' }}
-            >
-              <option value="">Todos</option>
-              {supervisorOptions.map(opt => (
-                <option key={opt.value} value={opt.value}>{opt.label}</option>
-              ))}
-            </select>
+            <label style={{ fontSize: '12px', fontWeight: '600', color: '#475569' }}>Filtrar por Marca</label>
+            <SearchableSelect 
+              value={filterMarca}
+              onChange={val => { setFilterMarca(val); setCurrentPage(1); }}
+              options={marcaOptions}
+              placeholder="Todas las marcas..."
+            />
           </div>
         </div>
         
@@ -457,7 +517,7 @@ const Presupuesto = () => {
             <tbody>
               {loading ? (
                 <tr><td colSpan="6" className="text-center">Cargando presupuesto...</td></tr>
-              ) : currentItems.map((p, index) => (
+              ) : presupuesto.map((p, index) => (
                 <tr key={p.id}>
                   <td>{indexOfFirstItem + index + 1}</td>
                   <td>
@@ -505,7 +565,7 @@ const Presupuesto = () => {
                   </td>
                 </tr>
               ))}
-              {!loading && filteredPresupuesto.length === 0 && (
+              {!loading && presupuesto.length === 0 && (
                 <tr><td colSpan="6" className="text-center color-muted">No hay registros</td></tr>
               )}
             </tbody>
@@ -518,15 +578,17 @@ const Presupuesto = () => {
             <button 
               className="btn btn-outline btn-sm" 
               onClick={() => setCurrentPage(prev => Math.max(prev - 1, 1))}
-              disabled={currentPage === 1}
+              disabled={currentPage === 1 || loading}
             >
               Anterior
             </button>
-            <span style={{ fontSize: '13px' }}>Página {currentPage} de {totalPages} ({filteredPresupuesto.length} registros en total)</span>
+            <span style={{ fontSize: '13px' }}>
+              Página {currentPage} de {totalPages} ({totalCount} registros en total)
+            </span>
             <button 
               className="btn btn-outline btn-sm" 
               onClick={() => setCurrentPage(prev => Math.min(prev + 1, totalPages))}
-              disabled={currentPage === totalPages}
+              disabled={currentPage === totalPages || loading}
             >
               Siguiente
             </button>
