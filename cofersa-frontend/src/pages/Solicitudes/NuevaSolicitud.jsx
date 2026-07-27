@@ -304,94 +304,59 @@ const NuevaSolicitud = () => {
   const updateSku = (id, field, value) => {
     setSkus(skus.map(s => {
       if (s.id !== id) return s;
-      
-      let cleanedValue = value;
-      if (value === '') {
-        cleanedValue = 0; 
-      }
-      if (field === 'mdesc' && typeof value === 'string') {
-        cleanedValue = value.replace(/[^0-9.-]/g, '');
-      }
-      
-      if (field === 'pct') {
-        const valNum = parseFloat(cleanedValue || value).toFixed(2);
-        if (valNum < 0) cleanedValue = '0';
-      }
-      if (field === 'mdesc') {
-        const valNum = parseFloat(cleanedValue).toFixed(2);
-        if (valNum < 0) cleanedValue = '0';
-      }
-      
-      const updated = { ...s, [field]: value === '' ? '' : (cleanedValue || value) };
+
+      const updated = { ...s, [field]: value };
 
       if (['cantidad', 'precio_base', 'pct', 'psol', 'mdesc'].includes(field)) {
-        const cant = parseFloat(updated.cantidad).toFixed(2) || 0;
-        const lpv = parseFloat(updated.precio_base).toFixed(2) || 0;
-        
-        if (field === 'pct' || (field === 'precio_base' && updated.lastEdited === 'pct')) {
-          updated.lastEdited = 'pct';
-          const pct = parseFloat(updated.pct).toFixed(2) || 0;
+        const cant = parseFloat(updated.cantidad) || 0;
+        const lpv = parseFloat(updated.precio_base) || 0;
+
+        // Determinar qué campo modificó activamente el usuario
+        if (['pct', 'psol', 'mdesc'].includes(field)) {
+          updated.lastEdited = field;
+        }
+
+        const mode = updated.lastEdited || 'pct';
+
+        if (mode === 'pct') {
+          const pct = parseFloat(updated.pct) || 0;
           if (lpv > 0) {
             const psol = lpv * (1 - pct / 100);
-            updated.psol = Number.parseFloat(psol).toFixed(2);
-            updated.mdesc = Number.parseFloat((lpv - psol) * cant).toFixed(2);
+            updated.psol = Number(psol.toFixed(2));
+            updated.mdesc = Number(((lpv - psol) * cant).toFixed(2));
           } else {
+            updated.psol = 0;
             updated.mdesc = 0;
           }
-        } else if (field === 'psol' || (field === 'precio_base' && updated.lastEdited === 'psol')) {
-          updated.lastEdited = 'psol';
-          const psol = parseFloat(updated.psol).toFixed(2) || 0;
+        } else if (mode === 'psol') {
+          const psol = parseFloat(updated.psol) || 0;
           if (lpv > 0) {
             const pct = (1 - psol / lpv) * 100;
-            updated.pct = pct.toFixed(2);
-            updated.mdesc = (lpv - psol) * cant;
+            updated.pct = Number(pct.toFixed(2));
+            updated.mdesc = Number(((lpv - psol) * cant).toFixed(2));
           } else {
+            updated.pct = 0;
             updated.mdesc = 0;
           }
-        } else if (field === 'mdesc' || (field === 'precio_base' && updated.lastEdited === 'mdesc')) {
-          updated.lastEdited = 'mdesc';
-          const mdescTotal = parseFloat(updated.mdesc).toFixed(2) || 0;
+        } else if (mode === 'mdesc') {
+          const mdescTotal = parseFloat(updated.mdesc) || 0;
           if (lpv > 0 && cant > 0) {
-            const mdescPorUnidad = mdescTotal / cant;
-            const pct = (mdescPorUnidad / lpv) * 100;
-            updated.pct = pct.toFixed(2);
-            const psol = lpv * (1 - pct / 100);
-            updated.psol = psol.toFixed(2);
+            const mdescUnidad = mdescTotal / cant;
+            const pct = (mdescUnidad / lpv) * 100;
+            const psol = lpv - mdescUnidad;
+            updated.pct = Number(pct.toFixed(2));
+            updated.psol = Number(psol.toFixed(2));
           } else if (lpv > 0) {
-            // Si cantidad es 0, calcular porcentaje basado en monto total directamente
             const pct = (mdescTotal / lpv) * 100;
-            updated.pct = pct.toFixed(2);
-            const psol = lpv * (1 - pct / 100);
-            updated.psol = psol.toFixed(2);
+            updated.pct = Number(pct.toFixed(2));
+            updated.psol = Number((lpv * (1 - pct / 100)).toFixed(2));
           } else {
-            updated.pct = '0';
-            updated.psol = '';
-          }
-        } else if (field === 'cantidad') {
-          // Si lastEdited era 'mdesc', mantener el monto total constante y recalcular porcentaje
-          if (updated.lastEdited === 'mdesc') {
-            const mdescTotal = parseFloat(updated.mdesc).toFixed(2) || 0;
-            if (lpv > 0 && cant > 0) {
-              const mdescPorUnidad = mdescTotal / cant;
-              const pct = (mdescPorUnidad / lpv) * 100;
-              updated.pct = pct.toFixed(2);
-              const psol = lpv * (1 - pct / 100);
-              updated.psol = psol.toFixed(2);
-            } else if (lpv > 0) {
-              // Si cantidad es 0, mantener el porcentaje actual
-              const pct = parseFloat(updated.pct).toFixed(2) || 0;
-              updated.psol = (lpv * (1 - pct / 100)).toFixed(2);
-              updated.mdesc = 0;
-            }
-          } else {
-            // Recalcular mdesc basado en psol actual (comportamiento original)
-            const psol = parseFloat(updated.psol).toFixed(2) || 0;
-            if (lpv > 0) {
-              updated.mdesc = (lpv - psol) * cant;
-            }
+            updated.pct = 0;
+            updated.psol = 0;
           }
         }
       }
+
       return updated;
     }));
   };
@@ -818,34 +783,65 @@ const NuevaSolicitud = () => {
               </div>
               <div className="form-group">
                 <label>Código SKU *</label>
-                <input type="text" className="form-control" readOnly value={s.codigo_sku} onChange={e => updateSku(s.id, 'codigo_sku', e.target.value)} disabled={submitting} />
+                <input type="text" className="form-control" readOnly value={s.codigo_sku} disabled={submitting} />
               </div>
               <div className="form-group">
                 <label>Descripción *</label>
-                <input type="text" className="form-control" readOnly value={s.descripcion} onChange={e => updateSku(s.id, 'descripcion', e.target.value)} disabled={submitting} />
+                <input type="text" className="form-control" readOnly value={s.descripcion} disabled={submitting} />
               </div>
               <div className="form-group">
                 <label>Cantidad *</label>
-                <input type="number" className="form-control" value={s.cantidad} onChange={e => updateSku(s.id, 'cantidad', e.target.value)} disabled={submitting} />
-              </div>
-              <div className="form-group">
-                <label>Precio LPV ₡ *</label>
-                <input type="number" className="form-control" readOnly value={s.precio_base} /*onChange={e => updateSku(s.id, 'precio_base', e.target.value)}*/ disabled={submitting} />
-              </div>
-              <div className="form-group">
-                <label>% Desc. Sol. *</label>
-                <input type="number" className="form-control" value={s.pct} onChange={e => updateSku(s.id, 'pct', e.target.value)} min="0" max={100} disabled={submitting} />
-              </div>
-              <div className="form-group">
-                <label>Monto Desc. ₡</label>
-                <input type="number" className="form-control" value={s.mdesc === 0 ? '' : s.mdesc} style={{ background: '#f8f8f8' }}  onChange={e => updateSku(s.id, 'mdesc', e.target.value)} min="0" step="0.01" />
-              </div>
-              <div className="form-group">
-                <label>Precio Solicitado ₡</label>
                 <input 
                   type="number" 
                   className="form-control" 
-                  value={s.psol === 0 ? '' : s.psol} 
+                  value={s.cantidad} 
+                  onChange={e => updateSku(s.id, 'cantidad', e.target.value)} 
+                  disabled={submitting} 
+                  min={1}
+                />
+              </div>
+              <div className="form-group">
+                <label>Precio Unitario ₡ *</label>
+                <input 
+                  type="number" 
+                  className="form-control" 
+                  readOnly 
+                  value={parseFloat(s.precio_base || 0).toFixed(2)} 
+                  disabled={submitting} 
+                />
+              </div>
+              <div className="form-group">
+                <label>% Descuento Total *</label>
+                <input 
+                  type="number" 
+                  className="form-control" 
+                  value={s.pct} 
+                  onChange={e => updateSku(s.id, 'pct', e.target.value)} 
+                  min="0" 
+                  max="100" 
+                  step="0.1"
+                  disabled={submitting} 
+                />
+              </div>
+              <div className="form-group">
+                <label>Monto Descuento Total ₡</label>
+                <input 
+                  type="number" 
+                  className="form-control" 
+                  value={s.mdesc ?? 0} 
+                  style={{ background: '#f8f8f8' }}  
+                  onChange={e => updateSku(s.id, 'mdesc', e.target.value)} 
+                  min="0" 
+                  step="1" 
+                  disabled={submitting}
+                />
+              </div>
+              <div className="form-group">
+                <label>Precio unitario sol. ₡</label>
+                <input 
+                  type="number" 
+                  className="form-control" 
+                  value={s.psol ?? 0} 
                   style={{ background: '#f8f8f8' }} 
                   onChange={e => updateSku(s.id, 'psol', e.target.value)} 
                   min="0" 
@@ -854,6 +850,7 @@ const NuevaSolicitud = () => {
                 />
               </div>
             </div>
+
 
             {/* Estimado y Alerta de Aprobación */}
             {s.marca && !reglasDict[s.marca.trim().toUpperCase()] && (
@@ -867,7 +864,7 @@ const NuevaSolicitud = () => {
             {reglasDict[s.marca.trim().toUpperCase()] && (
               <div style={{ marginTop: '15px' }}>
                 <div style={{ fontSize: '13px', fontWeight: 'bold', marginBottom: '8px' }}>
-                  Estimado gasto total ({s.marca}): <span style={{ color: '#28a745' }}>{formatCRC((parseFloat(s.cantidad) || 0) * (parseFloat(s.precio_base) || 0))}</span>
+                  Estimado gasto total ({s.marca}): <span style={{ color: '#28a745' }}>{formatCRC(Number(((parseFloat(s.cantidad) || 0) * (parseFloat(s.psol) || parseFloat(s.precio_base) || 0)).toFixed(2)))}</span>
                 </div>
 
                 {(() => {
