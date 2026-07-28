@@ -289,7 +289,7 @@ const NuevaSolicitud = () => {
         precio: initialData.precio || '',
         precio_base: initialData.precio_base || '',
         pct: '0',
-        psol: '',
+        psol: initialData.precio_base,
         mdesc: 0,
         bdf: initialData.bdf || '',
         lastEdited: 'pct'
@@ -484,7 +484,7 @@ const NuevaSolicitud = () => {
             precio: match.PRECIO || '',
             precio_base: match.PRECIO || '',
             pct: '',
-            psol: '',
+            psol: match.PRECIO,
             mdesc: 0,
             bdf: match.BDF || '',
             lastEdited: 'pct'
@@ -770,84 +770,111 @@ const NuevaSolicitud = () => {
               </div>
             )}
 
-            <div className="grid-4">
-              <div className="form-group">
-                <label>Marca *</label>
-                <select className="form-control" value={s.marca} onChange={e => updateSku(s.id, 'marca', e.target.value)} disabled={true}>
-                  <option value="">-- Seleccione --</option>
-                  {s.marca && !marcas.includes(s.marca) && (
-                    <option value={s.marca}>{s.marca}</option>
-                  )}
-                  {marcas.map(m => <option key={m} value={m}>{m}</option>)}
-                </select>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
+              {/* Primera Fila: 4 Elementos (25% cada uno) */}
+              <div style={{ display: 'flex', gap: '15px', flexWrap: 'wrap' }}>
+                <div className="form-group" style={{ flex: '1 1 calc(25% - 12px)', minWidth: '180px' }}>
+                  <label>Marca *</label>
+                  <select className="form-control" value={s.marca} onChange={e => updateSku(s.id, 'marca', e.target.value)} disabled={true}>
+                    <option value="">-- Seleccione --</option>
+                    {s.marca && !marcas.includes(s.marca) && (
+                      <option value={s.marca}>{s.marca}</option>
+                    )}
+                    {marcas.map(m => <option key={m} value={m}>{m}</option>)}
+                  </select>
+                </div>
+
+                <div className="form-group" style={{ flex: '1 1 calc(25% - 12px)', minWidth: '180px' }}>
+                  <label>Código SKU *</label>
+                  <input type="text" className="form-control" readOnly value={s.codigo_sku} disabled={submitting} />
+                </div>
+
+                <div className="form-group" style={{ flex: '1 1 calc(25% - 12px)', minWidth: '180px' }}>
+                  <label>Descripción *</label>
+                  <input type="text" className="form-control" readOnly value={s.descripcion} disabled={submitting} />
+                </div>
+
+                <div className="form-group" style={{ flex: '1 1 calc(25% - 12px)', minWidth: '180px' }}>
+                  <label>Precio Unitario ₡ *</label>
+                  <input 
+                    type="number" 
+                    className="form-control" 
+                    readOnly 
+                    value={parseFloat(s.precio_base || 0).toFixed(2)} 
+                    disabled={submitting} 
+                  />
+                </div>
               </div>
-              <div className="form-group">
-                <label>Código SKU *</label>
-                <input type="text" className="form-control" readOnly value={s.codigo_sku} disabled={submitting} />
-              </div>
-              <div className="form-group">
-                <label>Descripción *</label>
-                <input type="text" className="form-control" readOnly value={s.descripcion} disabled={submitting} />
-              </div>
-              <div className="form-group">
-                <label>Cantidad *</label>
-                <input 
-                  type="number" 
-                  className="form-control" 
-                  value={s.cantidad} 
-                  onChange={e => updateSku(s.id, 'cantidad', e.target.value)} 
-                  disabled={submitting} 
-                  min={1}
-                />
-              </div>
-              <div className="form-group">
-                <label>Precio Unitario ₡ *</label>
-                <input 
-                  type="number" 
-                  className="form-control" 
-                  readOnly 
-                  value={parseFloat(s.precio_base || 0).toFixed(2)} 
-                  disabled={submitting} 
-                />
-              </div>
-              <div className="form-group">
-                <label>% Descuento Total *</label>
-                <input 
-                  type="number" 
-                  className="form-control" 
-                  value={s.pct} 
-                  onChange={e => updateSku(s.id, 'pct', e.target.value)} 
-                  min="0" 
-                  max="100" 
-                  step="0.1"
-                  disabled={submitting} 
-                />
-              </div>
-              <div className="form-group">
-                <label>Monto Descuento Total ₡</label>
-                <input 
-                  type="number" 
-                  className="form-control" 
-                  value={s.mdesc ?? 0} 
-                  style={{ background: '#f8f8f8' }}  
-                  onChange={e => updateSku(s.id, 'mdesc', e.target.value)} 
-                  min="0" 
-                  step="1" 
-                  disabled={submitting}
-                />
-              </div>
-              <div className="form-group">
-                <label>Precio unitario sol. ₡</label>
-                <input 
-                  type="number" 
-                  className="form-control" 
-                  value={s.psol ?? 0} 
-                  style={{ background: '#f8f8f8' }} 
-                  onChange={e => updateSku(s.id, 'psol', e.target.value)} 
-                  min="0" 
-                  step="0.01" 
-                  disabled={submitting} 
-                />
+
+              {/* Segunda Fila: 5 Elementos (20% cada uno) */}
+              <div style={{ display: 'flex', gap: '15px', flexWrap: 'wrap' }}>
+                <div className="form-group" style={{ flex: '1 1 calc(20% - 12px)', minWidth: '150px' }}>
+                  <label>Cantidad *</label>
+                  <input 
+                    type="number" 
+                    className="form-control" 
+                    value={s.cantidad} 
+                    onChange={e => updateSku(s.id, 'cantidad', e.target.value)} 
+                    disabled={submitting} 
+                    min={1}
+                  />
+                </div>
+
+                <div className="form-group" style={{ flex: '1 1 calc(20% - 12px)', minWidth: '150px' }}>
+                  <label>% Descuento Total *</label>
+                  <input 
+                    type="number" 
+                    className="form-control" 
+                    value={s.pct} 
+                    onChange={e => updateSku(s.id, 'pct', e.target.value)} 
+                    min="0" 
+                    max="100" 
+                    step="0.1"
+                    disabled={submitting} 
+                  />
+                </div>
+
+                <div className="form-group" style={{ flex: '1 1 calc(20% - 12px)', minWidth: '150px' }}>
+                  <label>Monto Descuento Total ₡</label>
+                  <input 
+                    type="number" 
+                    className="form-control" 
+                    value={s.mdesc ?? 0} 
+                    style={{ background: '#f8f8f8' }}  
+                    onChange={e => updateSku(s.id, 'mdesc', e.target.value)} 
+                    min="0" 
+                    step="1" 
+                    disabled={submitting}
+                  />
+                </div>
+
+                <div className="form-group" style={{ flex: '1 1 calc(20% - 12px)', minWidth: '150px' }}>
+                  <label>Precio unitario sol. ₡</label>
+                  <input 
+                    type="number" 
+                    className="form-control" 
+                    value={s.psol ?? 0} 
+                    style={{ background: '#f8f8f8' }} 
+                    onChange={e => updateSku(s.id, 'psol', e.target.value)} 
+                    min="0" 
+                    step="0.01" 
+                    disabled={submitting} 
+                  />
+                </div>
+
+                <div className="form-group" style={{ flex: '1 1 calc(20% - 12px)', minWidth: '150px' }}>
+                  <label>Monto Final ₡</label>
+                  <input 
+                    type="number" 
+                    className="form-control" 
+                    value={parseFloat(s.psol * s.cantidad).toFixed(2) ?? 0} 
+                    style={{ background: '#f8f8f8' }} 
+                    onChange={e => updateSku(s.id, 'psol', e.target.value)} 
+                    min="0" 
+                    step="0.01" 
+                    disabled={true} 
+                  />
+                </div>
               </div>
             </div>
 
@@ -864,7 +891,7 @@ const NuevaSolicitud = () => {
             {reglasDict[s.marca.trim().toUpperCase()] && (
               <div style={{ marginTop: '15px' }}>
                 <div style={{ fontSize: '13px', fontWeight: 'bold', marginBottom: '8px' }}>
-                  Estimado gasto total ({s.marca}): <span style={{ color: '#28a745' }}>{formatCRC(Number(((parseFloat(s.cantidad) || 0) * (parseFloat(s.psol) || parseFloat(s.precio_base) || 0)).toFixed(2)))}</span>
+                  Estimado monto de descuento ({s.marca}): <span style={{ color: '#28a745' }}>{formatCRC(Number(((parseFloat(s.mdesc) || 0)).toFixed(2)))}</span>
                 </div>
 
                 {(() => {
