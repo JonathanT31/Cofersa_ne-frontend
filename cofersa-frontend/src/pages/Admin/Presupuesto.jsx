@@ -399,15 +399,56 @@ const Presupuesto = () => {
 
   // Prepare options for select fields
   // Any user who is not a vendedor can be a supervisor
-  const supervisorOptions = profiles
-    .filter(p => p.role !== 'vendedor' && p.status === 'activo')
-    .map(p => ({ value: p.username, label: `${p.nombre} ${p.apellido} (${p.username})` }));
+  const { supervisorOptions, asesorOptions, marcaOptions } = React.useMemo(() => {
+    let baseSupervisores = profiles.filter(p => p.role !== 'vendedor' && p.status === 'activo');
+    let baseAsesores = profiles.filter(p => p.role === 'vendedor' || p.role === 'admin');
+    let baseMarcas = [...marcas];
 
-  const asesorOptions = profiles
-    .filter(p => p.role === 'vendedor' || p.role === 'admin')
-    .map(p => ({ value: p.username, label: `${p.nombre} ${p.apellido} (${p.username})` }));
+    // Si hay un Vendedor seleccionado -> Filtrar Supervisores y Marcas asociadas a él
+    if (filterAsesor) {
+      const supervisoresDelAsesor = [...new Set(presupuesto.filter(p => p.asesor === filterAsesor).map(p => p.supervisor))];
+      if (supervisoresDelAsesor.length > 0) {
+        baseSupervisores = baseSupervisores.filter(p => supervisoresDelAsesor.includes(p.username));
+      }
 
-  const marcaOptions = marcas.map(m => ({ value: m, label: m }));
+      const marcasDelAsesor = [...new Set(presupuesto.filter(p => p.asesor === filterAsesor).map(p => p.marca))];
+      if (marcasDelAsesor.length > 0) {
+        baseMarcas = baseMarcas.filter(m => marcasDelAsesor.includes(m));
+      }
+    }
+
+    // Si hay un Supervisor seleccionado -> Filtrar Vendedores a su cargo y sus Marcas
+    if (filterSupervisor) {
+      const asesoresDelSupervisor = [...new Set(presupuesto.filter(p => p.supervisor === filterSupervisor).map(p => p.asesor))];
+      if (asesoresDelSupervisor.length > 0) {
+        baseAsesores = baseAsesores.filter(p => asesoresDelSupervisor.includes(p.username));
+      }
+
+      const marcasDelSupervisor = [...new Set(presupuesto.filter(p => p.supervisor === filterSupervisor).map(p => p.marca))];
+      if (marcasDelSupervisor.length > 0) {
+        baseMarcas = baseMarcas.filter(m => marcasDelSupervisor.includes(m));
+      }
+    }
+
+    // Si hay una Marca seleccionada -> Filtrar Vendedores y Supervisores con esa Marca
+    if (filterMarca) {
+      const asesoresDeMarca = [...new Set(presupuesto.filter(p => p.marca === filterMarca).map(p => p.asesor))];
+      if (asesoresDeMarca.length > 0) {
+        baseAsesores = baseAsesores.filter(p => asesoresDeMarca.includes(p.username));
+      }
+
+      const supervisoresDeMarca = [...new Set(presupuesto.filter(p => p.marca === filterMarca).map(p => p.supervisor))];
+      if (supervisoresDeMarca.length > 0) {
+        baseSupervisores = baseSupervisores.filter(p => supervisoresDeMarca.includes(p.username));
+      }
+    }
+
+    return {
+      supervisorOptions: baseSupervisores.map(p => ({ value: p.username, label: `${p.nombre} ${p.apellido} (${p.username})` })),
+      asesorOptions: baseAsesores.map(p => ({ value: p.username, label: `${p.nombre} ${p.apellido} (${p.username})` })),
+      marcaOptions: baseMarcas.map(m => ({ value: m, label: m }))
+    };
+  }, [profiles, marcas, presupuesto, filterAsesor, filterSupervisor, filterMarca]);
 
 
 
@@ -477,7 +518,10 @@ const Presupuesto = () => {
             <label style={{ fontSize: '12px', fontWeight: '600', color: '#475569' }}>Filtrar por Supervisor</label>
             <SearchableSelect 
               value={filterSupervisor}
-              onChange={val => { setFilterSupervisor(val); setCurrentPage(1); }}
+              onChange={val => { 
+                setFilterSupervisor(val); 
+                setCurrentPage(1); 
+              }}
               options={supervisorOptions}
               placeholder="Todos los supervisores..."
             />
@@ -486,7 +530,10 @@ const Presupuesto = () => {
             <label style={{ fontSize: '12px', fontWeight: '600', color: '#475569' }}>Filtrar por Vendedor</label>
             <SearchableSelect 
               value={filterAsesor}
-              onChange={val => { setFilterAsesor(val); setCurrentPage(1); }}
+              onChange={val => { 
+                setFilterAsesor(val); 
+                setCurrentPage(1); 
+              }}
               options={asesorOptions}
               placeholder="Todos los vendedores..."
             />
@@ -495,7 +542,10 @@ const Presupuesto = () => {
             <label style={{ fontSize: '12px', fontWeight: '600', color: '#475569' }}>Filtrar por Marca</label>
             <SearchableSelect 
               value={filterMarca}
-              onChange={val => { setFilterMarca(val); setCurrentPage(1); }}
+              onChange={val => { 
+                setFilterMarca(val); 
+                setCurrentPage(1); 
+              }}
               options={marcaOptions}
               placeholder="Todas las marcas..."
             />
