@@ -9,6 +9,7 @@ const Reglas = () => {
   const [loading, setLoading] = useState(true);
   const [importing, setImporting] = useState(false);
   const [file, setFile] = useState(null);
+  const [equivalencias, setEquivalencias] = useState([]);
 
   // States for filters & pagination
   const [filterMarca, setFilterMarca] = useState('');
@@ -18,7 +19,27 @@ const Reglas = () => {
 
   useEffect(() => {
     fetchReglas();
+    fetchEquivalencias();
   }, []);
+
+  const fetchEquivalencias = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('equivalencias_marcas')
+        .select('*');
+      if (error) throw error;
+      setEquivalencias(data || []);
+    } catch (err) {
+      console.error('Error fetching equivalencias:', err);
+    }
+  };
+
+  const mapBrandName = (name) => {
+    if (!name) return '';
+    const normalized = name.toLowerCase().replace(/\s+/g, ' ').trim();
+    const matched = equivalencias.find(eq => eq.grupo_marca.toLowerCase().replace(/\s+/g, ' ').trim() === normalized);
+    return matched ? matched.equivalente_tabla_2 : name.trim();
+  };
 
   const fetchReglas = async () => {
     try {
@@ -150,10 +171,16 @@ const Reglas = () => {
   const handleCellBlur = async (row, field, value) => {
     const isNew = typeof row.id === 'string' && row.id.startsWith('new-');
     
+    let finalValue = value;
+    if (field === 'marca') {
+      finalValue = mapBrandName(value);
+      handleCellChange(row.id, 'marca', finalValue);
+    }
+    
     if (isNew) {
       // Get the latest row from state and apply the new blurred value to avoid stale closures
       const latestRow = reglas.find(r => r.id === row.id) || row;
-      const updatedRow = { ...latestRow, [field]: value };
+      const updatedRow = { ...latestRow, [field]: finalValue };
 
       if (!updatedRow.marca || !updatedRow.marca.trim()) {
         return; // Esperar a que ingresen una marca para insertar
@@ -175,7 +202,7 @@ const Reglas = () => {
       }
     } else {
       try {
-        const updateData = { [field]: value };
+        const updateData = { [field]: finalValue };
         
         const { error } = await supabase
           .from('reglas')

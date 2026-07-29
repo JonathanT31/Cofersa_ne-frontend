@@ -1112,12 +1112,27 @@ async def import_reglas(file: UploadFile = File(...), user_id: str = Depends(ver
         contents = await file.read()
         file_buffer = io.BytesIO(contents)
         
-        # Procesamos
-        reglas = import_reglas_from_xlsx(file_buffer)
-        print(f"Reglas procesadas exitosamente en memoria: {len(reglas)} encontradas.")
-        
         # Conexión Supabase
         client = supabase_admin if supabase_admin else supabase
+        
+        # Obtener mapeo de equivalencias de marcas
+        brand_mapping = {}
+        try:
+            mapping_res = client.table("equivalencias_marcas").select("grupo_marca, equivalente_tabla_2").execute()
+            if mapping_res.data:
+                for row in mapping_res.data:
+                    gm = row.get("grupo_marca")
+                    eq = row.get("equivalente_tabla_2")
+                    if gm and eq:
+                        normalized_gm = " ".join(gm.strip().lower().split())
+                        brand_mapping[normalized_gm] = eq.strip()
+        except Exception as map_err:
+            print(f"Advertencia: No se pudo cargar la tabla de equivalencias de marcas: {map_err}")
+        
+        # Procesamos
+        reglas = import_reglas_from_xlsx(file_buffer, brand_mapping)
+        print(f"Reglas procesadas exitosamente en memoria: {len(reglas)} encontradas.")
+        
         client.table("reglas").upsert(reglas, on_conflict="marca,clasificacion").execute()
         
         return {"status": "success", "count": len(reglas)}
@@ -1139,10 +1154,25 @@ async def import_presupuesto(file: UploadFile = File(...), user_id: str = Depend
         contents = await file.read()
         file_buffer = io.BytesIO(contents)
         
-        pptos = import_presupuesto_from_xlsx(file_buffer)
+        client = supabase_admin if supabase_admin else supabase
+        
+        # Obtener mapeo de equivalencias de marcas
+        brand_mapping = {}
+        try:
+            mapping_res = client.table("equivalencias_marcas").select("grupo_marca, equivalente_tabla_2").execute()
+            if mapping_res.data:
+                for row in mapping_res.data:
+                    gm = row.get("grupo_marca")
+                    eq = row.get("equivalente_tabla_2")
+                    if gm and eq:
+                        normalized_gm = " ".join(gm.strip().lower().split())
+                        brand_mapping[normalized_gm] = eq.strip()
+        except Exception as map_err:
+            print(f"Advertencia: No se pudo cargar la tabla de equivalencias de marcas: {map_err}")
+        
+        pptos = import_presupuesto_from_xlsx(file_buffer, brand_mapping)
         print(f"Presupuestos procesados exitosamente: {len(pptos)} encontrados.")
         
-        client = supabase_admin if supabase_admin else supabase
         client.table("presupuesto").upsert(pptos, on_conflict="supervisor,marca,asesor").execute()
         
         return {"status": "success", "count": len(pptos)}

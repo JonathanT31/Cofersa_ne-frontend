@@ -281,7 +281,7 @@ def parse_number(val) -> float:
     except ValueError:
         return 0.0
 
-def import_reglas_from_xlsx(filepath) -> List[Dict[str, Any]]:
+def import_reglas_from_xlsx(filepath, brand_mapping: Dict[str, str] = None) -> List[Dict[str, Any]]:
     rows = read_xlsx(filepath)
     if not rows: return []
     headers = [str(h).strip().lower() for h in rows[0]]
@@ -302,6 +302,10 @@ def import_reglas_from_xlsx(filepath) -> List[Dict[str, Any]]:
             elif 'compra' in k: lim_c = parse_number(v)
         
         if marca:
+            if brand_mapping:
+                normalized_marca = " ".join(marca.lower().split())
+                marca = brand_mapping.get(normalized_marca, marca)
+                
             if lim_v == 0 and lim_s > 0:
                 lim_v = lim_s
                 lim_s = lim_g if lim_g > 0 else lim_c
@@ -315,7 +319,7 @@ def import_reglas_from_xlsx(filepath) -> List[Dict[str, Any]]:
             })
     return results
 
-def import_presupuesto_from_xlsx(filepath) -> List[Dict[str, Any]]:
+def import_presupuesto_from_xlsx(filepath, brand_mapping: Dict[str, str] = None) -> List[Dict[str, Any]]:
     rows = read_xlsx(filepath)
     if not rows: return []
     headers = [str(h).strip().lower() for h in rows[0]]
@@ -334,6 +338,9 @@ def import_presupuesto_from_xlsx(filepath) -> List[Dict[str, Any]]:
             elif 'ppto' in k or 'presupuesto' in k or 'crc' in k: ppto = parse_number(v)
         
         if marca and supervisor:
+            if brand_mapping:
+                normalized_marca = " ".join(marca.lower().split())
+                marca = brand_mapping.get(normalized_marca, marca)
             results.append({
                 'supervisor': supervisor.strip().lower(),
                 'asesor': asesor.strip().lower() if asesor else '',
