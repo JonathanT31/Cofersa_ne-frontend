@@ -261,7 +261,11 @@ const Presupuesto = () => {
       }
       
       const result = await response.json();
-      alert(`Éxito: Se importaron ${result.count} registros de presupuesto.`);
+      let msg = `✅ Éxito: Se importaron ${result.count} registros de presupuesto.`;
+      if (result.duplicates_ignored > 0) {
+        msg += `\n\n⚠️ Advertencia: Se ignoraron ${result.duplicates_ignored} fila(s) duplicadas del Excel (mismo supervisor + asesor + marca). Revisa tu archivo si esto no era esperado.`;
+      }
+      alert(msg);
       invalidateCacheAndReload();
     } catch (err) {
       alert('Error: ' + err.message);

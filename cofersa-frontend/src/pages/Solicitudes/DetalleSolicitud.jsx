@@ -78,7 +78,8 @@ const DetalleSolicitud = () => {
   useEffect(() => {
     if (sol && skus.length > 0 && user && user.role !== 'vendedor' && Object.keys(brandInfo).length === 0) {
       const uniqueBrands = [...new Set(skus.map(s => s.marca))];
-      fetchBrandDetails(sol.vendedor_id, sol.vendedor?.username, uniqueBrands);
+      // Pasar los SKUs actuales para incluir su monto en el cálculo de gasto
+      fetchBrandDetails(sol.vendedor_id, sol.vendedor?.username, uniqueBrands, skus);
     }
   }, [sol, skus, user]);
 
@@ -153,7 +154,7 @@ const DetalleSolicitud = () => {
     }
   };
 
-  const fetchBrandDetails = async (vendedorId, vendedorUsername, brands) => {
+  const fetchBrandDetails = async (vendedorId, vendedorUsername, brands, currentSkus = []) => {
     if (!brands || brands.length === 0) return;
     try {
       const now = new Date();
@@ -189,7 +190,7 @@ const DetalleSolicitud = () => {
         }
       }
 
-      // Fetch consumed spent
+      // Fetch consumed (only already-approved solicitudes)
       let gastadoMap = {};
       if (vendedorId) {
         const { data: sData } = await supabase
@@ -215,6 +216,16 @@ const DetalleSolicitud = () => {
           }
         }
       }
+
+      // Sumar el monto de la solicitud ACTUAL (pendiente de aprobación) al gasto
+      // para reflejar el impacto real si se aprueba
+      currentSkus.forEach(sk => {
+        if (sk.sku_estado !== 'rechazado') {
+          const m = (sk.marca || '').trim();
+          const monto = parseFloat(sk.monto_descuento) || 0;
+          if (m) gastadoMap[m] = (gastadoMap[m] || 0) + monto;
+        }
+      });
 
       const info = {};
       brands.forEach(b => {
@@ -508,6 +519,45 @@ const DetalleSolicitud = () => {
           </div>
         );
       })}
+
+      {/* ── Alerta de presupuesto para aprobadores ── */}
+      {isApprover && Object.keys(brandInfo).length > 0 && (() => {
+        const sinPpto = Object.entries(brandInfo).filter(([, info]) => !info.ppto || info.ppto <= 0);
+        const excedido = Object.entries(brandInfo).filter(([, info]) => info.ppto > 0 && info.gastado > info.ppto);
+        if (sinPpto.length === 0 && excedido.length === 0) return null;
+        return (
+          <div style={{ marginTop: '20px', borderRadius: '8px', overflow: 'hidden', border: '2px solid #e74c3c', marginBottom: '4px' }}>
+            <div style={{ backgroundColor: '#e74c3c', color: 'white', padding: '10px 16px', fontWeight: 700, fontSize: '14px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+              ⚠️ Alerta de Presupuesto — Vendedor: {sol.vendedor ? `${sol.vendedor.nombre} ${sol.vendedor.apellido}` : ''}
+            </div>
+            <div style={{ backgroundColor: '#fff5f5', padding: '14px 16px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+              {sinPpto.map(([marca]) => (
+                <div key={marca} style={{ display: 'flex', alignItems: 'flex-start', gap: '8px', padding: '8px 12px', backgroundColor: '#fee2e2', borderRadius: '6px', border: '1px solid #fca5a5' }}>
+                  <span style={{ fontSize: '16px', flexShrink: 0 }}>🔴</span>
+                  <div style={{ fontSize: '13px' }}>
+                    <strong>{marca}</strong>: El vendedor <strong>no tiene presupuesto asignado</strong> para esta marca este mes. Apruebe con precaución.
+                  </div>
+                </div>
+              ))}
+              {excedido.map(([marca, info]) => (
+                <div key={marca} style={{ display: 'flex', alignItems: 'flex-start', gap: '8px', padding: '8px 12px', backgroundColor: '#fee2e2', borderRadius: '6px', border: '1px solid #fca5a5' }}>
+                  <span style={{ fontSize: '16px', flexShrink: 0 }}>🔴</span>
+                  <div style={{ fontSize: '13px' }}>
+                    <strong>{marca}</strong>: <strong>Presupuesto excedido</strong> si se aprueba esta solicitud.
+                    <span style={{ margin: '0 6px', color: '#9ca3af' }}>|</span>
+                    Presupuesto: <strong>{formatCRC(info.ppto)}</strong>
+                    <span style={{ margin: '0 6px', color: '#9ca3af' }}>|</span>
+                    Gasto proyectado: <strong style={{ color: '#dc2626' }}>{formatCRC(info.gastado)}</strong>
+                    <span style={{ margin: '0 6px', color: '#9ca3af' }}>|</span>
+                    Exceso: <strong style={{ color: '#dc2626' }}>{formatCRC(info.gastado - info.ppto)}</strong>
+                  </div>
+                </div>
+              ))}
+              <div style={{ fontSize: '11px', color: '#9ca3af', marginTop: '2px' }}>El gasto proyectado incluye solicitudes aprobadas del mes más el monto de esta solicitud.</div>
+            </div>
+          </div>
+        );
+      })()}
 
       {isApprover && (
         pendingSkus.length > 0 ? (

@@ -1133,17 +1133,32 @@ async def import_reglas(file: UploadFile = File(...), user_id: str = Depends(ver
         reglas = import_reglas_from_xlsx(file_buffer, brand_mapping)
         print(f"Reglas procesadas exitosamente en memoria: {len(reglas)} encontradas.")
         
-        client.table("reglas").upsert(reglas, on_conflict="marca,clasificacion").execute()
+        # Deduplicar por (marca, clasificacion) antes del upsert
+        seen_keys = {}
+        deduped = []
+        dup_count = 0
+        for r in reglas:
+            key = (r["marca"], r["clasificacion"])
+            if key in seen_keys:
+                dup_count += 1
+                print(f"   ⚠️ Fila duplicada ignorada: marca={key[0]}, clasificacion={key[1]}")
+            else:
+                seen_keys[key] = True
+                deduped.append(r)
         
-        return {"status": "success", "count": len(reglas)}
+        if dup_count > 0:
+            print(f"\n⚠️ Se ignoraron {dup_count} filas duplicadas del Excel (misma combinación marca+clasificacion). Se subieron {len(deduped)} filas únicas.")
+        
+        client.table("reglas").upsert(deduped, on_conflict="marca,clasificacion").execute()
+        
+        return {"status": "success", "count": len(deduped), "duplicates_ignored": dup_count}
         
     except Exception as e:
-        # Esto imprimirá el error real con la línea exacta en tu consola local
         print("\n!!! ERROR CRÍTICO EN ENDPOINT IMPORT-REGLAS !!!")
         traceback.print_exc() 
-        
-        # Además se lo mandamos al frontend para que lo veas en el alert()
         raise HTTPException(status_code=500, detail=f"Error interno: {str(e)}")
+
+
 
 
 @app.post("/api/admin/import-presupuesto")
@@ -1173,10 +1188,29 @@ async def import_presupuesto(file: UploadFile = File(...), user_id: str = Depend
         pptos = import_presupuesto_from_xlsx(file_buffer, brand_mapping)
         print(f"Presupuestos procesados exitosamente: {len(pptos)} encontrados.")
         
-        client.table("presupuesto").upsert(pptos, on_conflict="supervisor,marca,asesor").execute()
+        # ── DIAGNÓSTICO: detectar y reportar duplicados (solo log, no bloquear) ──
+        seen_keys = {}
+        deduped = []
+        dup_count = 0
+        for p in pptos:
+            key = (p["supervisor"], p["asesor"], p["marca"])
+            if key in seen_keys:
+                dup_count += 1
+                print(f"   ⚠️ Fila duplicada ignorada: supervisor={key[0]}, asesor={key[1]}, marca={key[2]}, ppto={p['ppto_mensual']}")
+            else:
+                seen_keys[key] = True
+                deduped.append(p)
         
-        return {"status": "success", "count": len(pptos)}
+        if dup_count > 0:
+            print(f"\n⚠️ Se ignoraron {dup_count} filas duplicadas del Excel (misma combinación supervisor+asesor+marca). Se subieron {len(deduped)} filas únicas.")
+        # ── FIN DIAGNÓSTICO ────────────────────────────────────────────────────
         
+        client.table("presupuesto").upsert(deduped, on_conflict="supervisor,marca,asesor").execute()
+        
+        return {"status": "success", "count": len(deduped), "duplicates_ignored": dup_count}
+        
+    except HTTPException:
+        raise
     except Exception as e:
         print("\n!!! ERROR CRÍTICO EN ENDPOINT IMPORT-PRESUPUESTO !!!")
         traceback.print_exc()
